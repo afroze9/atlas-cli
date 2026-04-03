@@ -77,7 +77,7 @@ public static class WorkItemCommands
                 return;
             }
 
-            var issues = data.Value.GetProperty("issues").EnumerateArray().Select(FormatIssueSummary);
+            var issues = data.Value.GetProperty("issues").EnumerateArray().Select(FormatIssue);
             OutputService.Print(issues, format);
         });
         return cmd;
@@ -92,8 +92,9 @@ public static class WorkItemCommands
         var assigneeOption = new Option<string?>("--assignee") { Description = "Assignee email or account ID. Use '@me' for self-assign" };
         var labelOption = new Option<string?>("--label") { Description = "Comma-separated labels" };
         var parentOption = new Option<string?>("--parent") { Description = "Parent issue key" };
+        var storyPointsOption = new Option<double?>("--story-points") { Description = "Story point estimate" };
 
-        var cmd = new Command("create", "Create a work item") { projectOption, typeOption, summaryOption, descriptionOption, assigneeOption, labelOption, parentOption };
+        var cmd = new Command("create", "Create a work item") { projectOption, typeOption, summaryOption, descriptionOption, assigneeOption, labelOption, parentOption, storyPointsOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
@@ -104,6 +105,7 @@ public static class WorkItemCommands
             var assignee = parseResult.GetValue(assigneeOption);
             var labels = parseResult.GetValue(labelOption);
             var parent = parseResult.GetValue(parentOption);
+            var storyPoints = parseResult.GetValue(storyPointsOption);
 
             if (!AllowedSpacesService.CheckAndPrompt(project.ToUpperInvariant(), "write")) { Environment.ExitCode = 1; return; }
 
@@ -149,6 +151,12 @@ public static class WorkItemCommands
             if (!string.IsNullOrEmpty(parent))
                 fields["parent"] = new { key = parent };
 
+            if (storyPoints.HasValue)
+            {
+                var spField = AuthService.LoadConfig().StoryPointsField;
+                fields[spField] = storyPoints.Value;
+            }
+
             var payload = new { fields };
             var result = await ApiHelper.PostAsync(client, "issue", payload, ct);
             if (result == null) return;
@@ -172,8 +180,9 @@ public static class WorkItemCommands
         var assigneeOption = new Option<string?>("--assignee") { Description = "New assignee email or account ID" };
         var labelOption = new Option<string?>("--label") { Description = "Comma-separated labels (replaces existing)" };
         var priorityOption = new Option<string?>("--priority") { Description = "Priority name (e.g. High, Medium, Low)" };
+        var storyPointsOption = new Option<double?>("--story-points") { Description = "Story point estimate" };
 
-        var cmd = new Command("edit", "Edit a work item") { keyArg, summaryOption, descriptionOption, assigneeOption, labelOption, priorityOption };
+        var cmd = new Command("edit", "Edit a work item") { keyArg, summaryOption, descriptionOption, assigneeOption, labelOption, priorityOption, storyPointsOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
@@ -183,6 +192,7 @@ public static class WorkItemCommands
             var assignee = parseResult.GetValue(assigneeOption);
             var labels = parseResult.GetValue(labelOption);
             var priority = parseResult.GetValue(priorityOption);
+            var storyPoints = parseResult.GetValue(storyPointsOption);
 
             var projectKey = AllowedSpacesService.ExtractProjectKey(key);
             if (!AllowedSpacesService.CheckAndPrompt(projectKey, "write")) { Environment.ExitCode = 1; return; }
@@ -225,6 +235,12 @@ public static class WorkItemCommands
 
             if (!string.IsNullOrEmpty(priority))
                 fields["priority"] = new { name = priority };
+
+            if (storyPoints.HasValue)
+            {
+                var spField = AuthService.LoadConfig().StoryPointsField;
+                fields[spField] = storyPoints.Value;
+            }
 
             if (fields.Count == 0)
             {
@@ -344,6 +360,11 @@ public static class WorkItemCommands
     private static object FormatIssue(JsonElement issue)
     {
         issue.TryGetProperty("fields", out var fields);
+        var spField = AuthService.LoadConfig().StoryPointsField;
+        double? storyPoints = null;
+        if (fields.TryGetProperty(spField, out var spValue) && spValue.ValueKind == JsonValueKind.Number)
+            storyPoints = spValue.GetDouble();
+
         return new
         {
             Key = issue.GetString("key"),
@@ -351,6 +372,7 @@ public static class WorkItemCommands
             Status = fields.GetString("status", "name"),
             Type = fields.GetString("issuetype", "name"),
             Priority = fields.GetString("priority", "name"),
+            StoryPoints = storyPoints,
             Assignee = fields.GetString("assignee", "displayName"),
             Reporter = fields.GetString("reporter", "displayName"),
             Created = fields.GetString("created"),

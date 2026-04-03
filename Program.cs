@@ -17,5 +17,6 @@ rootCommand.Subcommands.Add(AuthCommands.Build());
 rootCommand.Subcommands.Add(jiraCommand);
 rootCommand.Subcommands.Add(confluenceCommand);
 rootCommand.Subcommands.Add(PermissionCommands.Build(GlobalOptions.Format));
+rootCommand.Subcommands.Add(ConfigCommands.Build(GlobalOptions.Format));
 
 return await rootCommand.Parse(args).InvokeAsync();
