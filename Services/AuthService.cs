@@ -45,12 +45,14 @@ public class AuthService
 
         if (!string.IsNullOrEmpty(envDomain) && !string.IsNullOrEmpty(envEmail) && !string.IsNullOrEmpty(envToken))
         {
-            return new AtlasConfig
+            var envConfig = new AtlasConfig
             {
                 Domain = envDomain,
                 Email = envEmail,
                 ApiToken = envToken
             };
+            ApplyEnvOverrides(envConfig);
+            return envConfig;
         }
 
         Console.Error.WriteLine("Not logged in. Run 'atlas-cli auth login' or set environment variables:");
@@ -59,11 +61,27 @@ public class AuthService
         return null!; // unreachable
     }
 
+    public static void SaveConfig(AtlasConfig config)
+    {
+        Directory.CreateDirectory(ConfigDir);
+        File.WriteAllText(ConfigPath, JsonSerializer.Serialize(config, WriteOptions));
+    }
+
     private static AtlasConfig? LoadFromFile()
     {
         if (!File.Exists(ConfigPath)) return null;
         var json = File.ReadAllText(ConfigPath);
-        return JsonSerializer.Deserialize<AtlasConfig>(json);
+        var config = JsonSerializer.Deserialize<AtlasConfig>(json);
+        if (config != null)
+            ApplyEnvOverrides(config);
+        return config;
+    }
+
+    private static void ApplyEnvOverrides(AtlasConfig config)
+    {
+        var envSpField = Environment.GetEnvironmentVariable("ATLAS_CLI_STORY_POINTS_FIELD");
+        if (!string.IsNullOrEmpty(envSpField))
+            config.StoryPointsField = envSpField;
     }
 }
 
@@ -72,4 +90,5 @@ public class AtlasConfig
     public string Domain { get; set; } = "";
     public string Email { get; set; } = "";
     public string ApiToken { get; set; } = "";
+    public string StoryPointsField { get; set; } = "customfield_10016";
 }
