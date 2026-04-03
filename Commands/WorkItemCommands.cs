@@ -88,13 +88,14 @@ public static class WorkItemCommands
         var projectOption = new Option<string>("--project") { Description = "Project key",  Required = true };
         var typeOption = new Option<string>("--type") { Description = "Issue type (e.g. Story, Task, Bug)",  Required = true };
         var summaryOption = new Option<string>("--summary") { Description = "Issue summary",  Required = true };
-        var descriptionOption = new Option<string?>("--description") { Description = "Issue description (plain text)" };
+        var descriptionOption = new Option<string?>("--description") { Description = "Issue description" };
+        var descFormatOption = new Option<string>("--description-format") { Description = "Description format: plain or markdown", DefaultValueFactory = _ => "plain" };
         var assigneeOption = new Option<string?>("--assignee") { Description = "Assignee email or account ID. Use '@me' for self-assign" };
         var labelOption = new Option<string?>("--label") { Description = "Comma-separated labels" };
         var parentOption = new Option<string?>("--parent") { Description = "Parent issue key" };
         var storyPointsOption = new Option<double?>("--story-points") { Description = "Story point estimate" };
 
-        var cmd = new Command("create", "Create a work item") { projectOption, typeOption, summaryOption, descriptionOption, assigneeOption, labelOption, parentOption, storyPointsOption };
+        var cmd = new Command("create", "Create a work item") { projectOption, typeOption, summaryOption, descriptionOption, descFormatOption, assigneeOption, labelOption, parentOption, storyPointsOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
@@ -102,6 +103,7 @@ public static class WorkItemCommands
             var type = parseResult.GetValue(typeOption)!;
             var summary = parseResult.GetValue(summaryOption)!;
             var description = parseResult.GetValue(descriptionOption);
+            var descFormat = parseResult.GetValue(descFormatOption)!;
             var assignee = parseResult.GetValue(assigneeOption);
             var labels = parseResult.GetValue(labelOption);
             var parent = parseResult.GetValue(parentOption);
@@ -120,22 +122,9 @@ public static class WorkItemCommands
 
             if (!string.IsNullOrEmpty(description))
             {
-                fields["description"] = new
-                {
-                    type = "doc",
-                    version = 1,
-                    content = new[]
-                    {
-                        new
-                        {
-                            type = "paragraph",
-                            content = new[]
-                            {
-                                new { type = "text", text = description }
-                            }
-                        }
-                    }
-                };
+                fields["description"] = descFormat == "markdown"
+                    ? AdfConverter.ConvertMarkdownToAdf(description)
+                    : AdfConverter.CreatePlainTextAdf(description);
             }
 
             if (!string.IsNullOrEmpty(assignee))
@@ -176,19 +165,21 @@ public static class WorkItemCommands
     {
         var keyArg = new Argument<string>("key") { Description = "Work item key (e.g. PROJ-123)" };
         var summaryOption = new Option<string?>("--summary") { Description = "New summary" };
-        var descriptionOption = new Option<string?>("--description") { Description = "New description (plain text)" };
+        var descriptionOption = new Option<string?>("--description") { Description = "New description" };
+        var descFormatOption = new Option<string>("--description-format") { Description = "Description format: plain or markdown", DefaultValueFactory = _ => "plain" };
         var assigneeOption = new Option<string?>("--assignee") { Description = "New assignee email or account ID" };
         var labelOption = new Option<string?>("--label") { Description = "Comma-separated labels (replaces existing)" };
         var priorityOption = new Option<string?>("--priority") { Description = "Priority name (e.g. High, Medium, Low)" };
         var storyPointsOption = new Option<double?>("--story-points") { Description = "Story point estimate" };
 
-        var cmd = new Command("edit", "Edit a work item") { keyArg, summaryOption, descriptionOption, assigneeOption, labelOption, priorityOption, storyPointsOption };
+        var cmd = new Command("edit", "Edit a work item") { keyArg, summaryOption, descriptionOption, descFormatOption, assigneeOption, labelOption, priorityOption, storyPointsOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
             var key = parseResult.GetValue(keyArg)!;
             var summary = parseResult.GetValue(summaryOption);
             var description = parseResult.GetValue(descriptionOption);
+            var descFormat = parseResult.GetValue(descFormatOption)!;
             var assignee = parseResult.GetValue(assigneeOption);
             var labels = parseResult.GetValue(labelOption);
             var priority = parseResult.GetValue(priorityOption);
@@ -205,22 +196,9 @@ public static class WorkItemCommands
 
             if (!string.IsNullOrEmpty(description))
             {
-                fields["description"] = new
-                {
-                    type = "doc",
-                    version = 1,
-                    content = new[]
-                    {
-                        new
-                        {
-                            type = "paragraph",
-                            content = new[]
-                            {
-                                new { type = "text", text = description }
-                            }
-                        }
-                    }
-                };
+                fields["description"] = descFormat == "markdown"
+                    ? AdfConverter.ConvertMarkdownToAdf(description)
+                    : AdfConverter.CreatePlainTextAdf(description);
             }
 
             if (!string.IsNullOrEmpty(assignee))
