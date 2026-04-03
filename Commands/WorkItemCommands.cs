@@ -23,12 +23,14 @@ public static class WorkItemCommands
     {
         var keyArg = new Argument<string>("key") { Description = "Work item key (e.g. PROJ-123)" };
         var fieldsOption = new Option<string?>("--fields") { Description = "Comma-separated list of fields to return" };
-        var cmd = new Command("view", "View a work item") { keyArg, fieldsOption };
+        var descFormatOption = new Option<string>("--description-format") { Description = "Description output format: plain, markdown, or adf", DefaultValueFactory = _ => "plain" };
+        var cmd = new Command("view", "View a work item") { keyArg, fieldsOption, descFormatOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
             var key = parseResult.GetValue(keyArg)!;
             var fields = parseResult.GetValue(fieldsOption);
+            var descFormat = parseResult.GetValue(descFormatOption)!;
 
             var projectKey = AllowedSpacesService.ExtractProjectKey(key);
             if (!AllowedSpacesService.CheckAndPrompt(projectKey, "read")) { Environment.ExitCode = 1; return; }
@@ -42,7 +44,7 @@ public static class WorkItemCommands
             if (data == null) return;
 
             var issue = data.Value;
-            OutputService.Print(FormatIssue(issue), format);
+            OutputService.Print(FormatIssue(issue, descFormat), format);
         });
         return cmd;
     }
@@ -53,7 +55,8 @@ public static class WorkItemCommands
         var fieldsOption = new Option<string?>("--fields") { Description = "Comma-separated list of fields" };
         var limitOption = new Option<int>("--limit") { Description = "Max results",  DefaultValueFactory = _ => 50 };
         var countOption = new Option<bool>("--count") { Description = "Only return the count of matching issues" };
-        var cmd = new Command("search", "Search work items with JQL") { jqlOption, fieldsOption, limitOption, countOption };
+        var descFormatOption = new Option<string>("--description-format") { Description = "Description output format: plain, markdown, or adf", DefaultValueFactory = _ => "plain" };
+        var cmd = new Command("search", "Search work items with JQL") { jqlOption, fieldsOption, limitOption, countOption, descFormatOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
@@ -61,6 +64,7 @@ public static class WorkItemCommands
             var fields = parseResult.GetValue(fieldsOption);
             var limit = parseResult.GetValue(limitOption);
             var countOnly = parseResult.GetValue(countOption);
+            var descFormat = parseResult.GetValue(descFormatOption)!;
 
             using var client = AtlasClientFactory.CreateJiraClient();
             var requestedFields = !string.IsNullOrEmpty(fields)
@@ -77,7 +81,7 @@ public static class WorkItemCommands
                 return;
             }
 
-            var issues = data.Value.GetProperty("issues").EnumerateArray().Select(FormatIssue);
+            var issues = data.Value.GetProperty("issues").EnumerateArray().Select(i => FormatIssue(i, descFormat));
             OutputService.Print(issues, format);
         });
         return cmd;
@@ -335,13 +339,20 @@ public static class WorkItemCommands
         return firstMatch.GetString("accountId");
     }
 
-    private static object FormatIssue(JsonElement issue)
+    private static object FormatIssue(JsonElement issue, string descFormat = "plain")
     {
         issue.TryGetProperty("fields", out var fields);
         var spField = AuthService.LoadConfig().StoryPointsField;
         double? storyPoints = null;
         if (fields.TryGetProperty(spField, out var spValue) && spValue.ValueKind == JsonValueKind.Number)
             storyPoints = spValue.GetDouble();
+
+        object? description = descFormat switch
+        {
+            "markdown" => AdfConverter.ConvertAdfToMarkdown(fields),
+            "adf" => AdfConverter.ExtractRawAdf(fields),
+            _ => AdfConverter.ExtractPlainText(fields)
+        };
 
         return new
         {
@@ -355,43 +366,7 @@ public static class WorkItemCommands
             Reporter = fields.GetString("reporter", "displayName"),
             Created = fields.GetString("created"),
             Updated = fields.GetString("updated"),
-            Description = ExtractDescription(fields)
+            Description = description
         };
-    }
-
-    private static object FormatIssueSummary(JsonElement issue)
-    {
-        issue.TryGetProperty("fields", out var fields);
-        return new
-        {
-            Key = issue.GetString("key"),
-            Type = fields.GetString("issuetype", "name"),
-            Summary = fields.GetString("summary"),
-            Status = fields.GetString("status", "name"),
-            Assignee = fields.GetString("assignee", "displayName"),
-            Priority = fields.GetString("priority", "name")
-        };
-    }
-
-    private static string? ExtractDescription(JsonElement fields)
-    {
-        if (fields.ValueKind == JsonValueKind.Undefined || fields.ValueKind == JsonValueKind.Null)
-            return null;
-        if (!fields.TryGetProperty("description", out var desc) || desc.ValueKind == JsonValueKind.Null)
-            return null;
-        if (!desc.TryGetProperty("content", out var content))
-            return null;
-
-        var texts = new List<string>();
-        foreach (var block in content.EnumerateArray())
-        {
-            if (!block.TryGetProperty("content", out var inlineContent)) continue;
-            foreach (var inline in inlineContent.EnumerateArray())
-            {
-                if (inline.TryGetProperty("text", out var text))
-                    texts.Add(text.GetString() ?? "");
-            }
-        }
-        return texts.Count > 0 ? string.Join("\n", texts) : null;
     }
 }
