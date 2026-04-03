@@ -10,10 +10,11 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>atlas-cli</ToolCommandName>
     <PackageId>atlas-cli</PackageId>
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Markdig" Version="1.1.2" />
     <PackageReference Include="System.CommandLine" Version="2.0.5" />
   </ItemGroup>
 
