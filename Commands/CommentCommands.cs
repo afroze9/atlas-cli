@@ -48,7 +48,7 @@ public static class CommentCommands
     {
         var keyOption = new Option<string>("--key") { Description = "Work item key (e.g. PROJ-123)",  Required = true };
         var bodyOption = new Option<string>("--body") { Description = "Comment text",  Required = true };
-        var bodyFormatOption = new Option<string>("--body-format") { Description = "Body format: plain or markdown", DefaultValueFactory = _ => "plain" };
+        var bodyFormatOption = new Option<string>("--body-format") { Description = "Body format: plain, markdown, or adf", DefaultValueFactory = _ => "plain" };
         var cmd = new Command("create", "Add a comment to a work item") { keyOption, bodyOption, bodyFormatOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -63,9 +63,12 @@ public static class CommentCommands
             using var client = AtlasClientFactory.CreateJiraClient();
             var payload = new
             {
-                body = bodyFormat == "markdown"
-                    ? AdfConverter.ConvertMarkdownToAdf(body)
-                    : AdfConverter.CreatePlainTextAdf(body)
+                body = bodyFormat switch
+                {
+                    "markdown" => AdfConverter.ConvertMarkdownToAdf(body),
+                    "adf" => AdfConverter.ParseRawAdf(body),
+                    _ => AdfConverter.CreatePlainTextAdf(body)
+                }
             };
 
             var result = await ApiHelper.PostAsync(client, $"issue/{Uri.EscapeDataString(key)}/comment", payload, ct);

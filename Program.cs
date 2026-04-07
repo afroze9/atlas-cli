@@ -13,7 +13,7 @@ var confluenceCommand = new Command("confluence", "Confluence Cloud operations")
 confluenceCommand.Subcommands.Add(SpaceCommands.Build(GlobalOptions.Format));
 confluenceCommand.Subcommands.Add(PageCommands.Build(GlobalOptions.Format));
 
-rootCommand.Subcommands.Add(AuthCommands.Build());
+rootCommand.Subcommands.Add(AuthCommands.Build(GlobalOptions.Format));
 rootCommand.Subcommands.Add(jiraCommand);
 rootCommand.Subcommands.Add(confluenceCommand);
 rootCommand.Subcommands.Add(PermissionCommands.Build(GlobalOptions.Format));

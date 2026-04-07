@@ -7,6 +7,14 @@ namespace AtlasCli.Services;
 
 public static class AdfConverter
 {
+    public static object ParseRawAdf(string json)
+    {
+        var doc = JsonSerializer.Deserialize<JsonElement>(json);
+        if (doc.ValueKind != JsonValueKind.Object || doc.GetString("type") != "doc")
+            throw new InvalidOperationException("Invalid ADF: must be a JSON object with type \"doc\"");
+        return doc;
+    }
+
     public static object CreatePlainTextAdf(string text)
     {
         return new

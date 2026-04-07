@@ -11,6 +11,8 @@ public static class PageCommands
         var cmd = new Command("page", "Confluence page operations");
         cmd.Subcommands.Add(BuildList(formatOption));
         cmd.Subcommands.Add(BuildView(formatOption));
+        cmd.Subcommands.Add(BuildCreate(formatOption));
+        cmd.Subcommands.Add(BuildUpdate(formatOption));
         return cmd;
     }
 
@@ -95,6 +97,139 @@ public static class PageCommands
                 CreatedAt = p.GetString("createdAt"),
                 Version = p.GetString("version", "number"),
                 Body = p.GetString("body", bodyFormat, "value")
+            }, format);
+        });
+        return cmd;
+    }
+
+    private static Command BuildCreate(Option<string> formatOption)
+    {
+        var spaceIdOption = new Option<string>("--space-id") { Description = "Confluence space ID", Required = true };
+        var titleOption = new Option<string>("--title") { Description = "Page title", Required = true };
+        var bodyOption = new Option<string>("--body") { Description = "Page content", Required = true };
+        var bodyFormatOption = new Option<string>("--body-format") { Description = "Body format: plain, markdown, or adf (default: markdown)", DefaultValueFactory = _ => "markdown" };
+        var parentIdOption = new Option<string?>("--parent-id") { Description = "Parent page ID" };
+        var statusOption = new Option<string>("--status") { Description = "Page status: current or draft (default: current)", DefaultValueFactory = _ => "current" };
+        var cmd = new Command("create", "Create a Confluence page") { spaceIdOption, titleOption, bodyOption, bodyFormatOption, parentIdOption, statusOption };
+        cmd.SetAction(async (parseResult, ct) =>
+        {
+            var format = parseResult.GetValue(formatOption)!;
+            var spaceId = parseResult.GetValue(spaceIdOption)!;
+            var title = parseResult.GetValue(titleOption)!;
+            var body = parseResult.GetValue(bodyOption)!;
+            var bodyFormat = parseResult.GetValue(bodyFormatOption)!;
+            var parentId = parseResult.GetValue(parentIdOption);
+            var status = parseResult.GetValue(statusOption)!;
+
+            if (!AllowedSpacesService.CheckAndPrompt(spaceId, "write", "confluence")) { Environment.ExitCode = 1; return; }
+
+            var adfBody = bodyFormat switch
+            {
+                "adf" => AdfConverter.ParseRawAdf(body),
+                "plain" => AdfConverter.CreatePlainTextAdf(body),
+                _ => AdfConverter.ConvertMarkdownToAdf(body)
+            };
+
+            var payload = new Dictionary<string, object>
+            {
+                ["spaceId"] = spaceId,
+                ["status"] = status,
+                ["title"] = title,
+                ["body"] = new { representation = "atlas_doc_format", value = JsonSerializer.Serialize(adfBody) }
+            };
+            if (!string.IsNullOrEmpty(parentId))
+                payload["parentId"] = parentId;
+
+            using var client = AtlasClientFactory.CreateConfluenceClient();
+            var result = await ApiHelper.PostAsync(client, "pages", payload, ct);
+            if (result == null) return;
+
+            OutputService.Print(new
+            {
+                Status = "created",
+                Id = result.Value.GetString("id"),
+                Title = result.Value.GetString("title"),
+                SpaceId = result.Value.GetString("spaceId"),
+                Version = result.Value.GetString("version", "number")
+            }, format);
+        });
+        return cmd;
+    }
+
+    private static Command BuildUpdate(Option<string> formatOption)
+    {
+        var idArg = new Argument<string>("id") { Description = "Page ID" };
+        var titleOption = new Option<string?>("--title") { Description = "New page title" };
+        var bodyOption = new Option<string?>("--body") { Description = "New page content" };
+        var bodyFormatOption = new Option<string>("--body-format") { Description = "Body format: plain, markdown, or adf (default: markdown)", DefaultValueFactory = _ => "markdown" };
+        var messageOption = new Option<string?>("--message") { Description = "Version message" };
+        var cmd = new Command("update", "Update a Confluence page") { idArg, titleOption, bodyOption, bodyFormatOption, messageOption };
+        cmd.SetAction(async (parseResult, ct) =>
+        {
+            var format = parseResult.GetValue(formatOption)!;
+            var id = parseResult.GetValue(idArg)!;
+            var title = parseResult.GetValue(titleOption);
+            var body = parseResult.GetValue(bodyOption);
+            var bodyFormat = parseResult.GetValue(bodyFormatOption)!;
+            var message = parseResult.GetValue(messageOption);
+
+            if (string.IsNullOrEmpty(title) && string.IsNullOrEmpty(body))
+            {
+                OutputService.PrintError("validation", "At least one of --title or --body must be provided.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            using var client = AtlasClientFactory.CreateConfluenceClient();
+
+            // GET current page to read version number and current title
+            var existing = await ApiHelper.GetAsync(client, $"pages/{Uri.EscapeDataString(id)}?body-format=atlas_doc_format", ct);
+            if (existing == null) return;
+
+            var p = existing.Value;
+            var spaceId = p.GetString("spaceId");
+            if (!string.IsNullOrEmpty(spaceId))
+            {
+                if (!AllowedSpacesService.CheckAndPrompt(spaceId, "write", "confluence")) { Environment.ExitCode = 1; return; }
+            }
+
+            var currentVersion = int.Parse(p.GetString("version", "number") ?? "0");
+            var currentTitle = p.GetString("title") ?? "";
+            var currentStatus = p.GetString("status") ?? "current";
+
+            var version = new Dictionary<string, object> { ["number"] = currentVersion + 1 };
+            if (!string.IsNullOrEmpty(message))
+                version["message"] = message;
+
+            var payload = new Dictionary<string, object>
+            {
+                ["id"] = id,
+                ["status"] = currentStatus,
+                ["title"] = title ?? currentTitle,
+                ["version"] = version
+            };
+
+            if (!string.IsNullOrEmpty(body))
+            {
+                var adfBody = bodyFormat switch
+                {
+                    "adf" => AdfConverter.ParseRawAdf(body),
+                    "plain" => AdfConverter.CreatePlainTextAdf(body),
+                    _ => AdfConverter.ConvertMarkdownToAdf(body)
+                };
+                payload["body"] = new { representation = "atlas_doc_format", value = JsonSerializer.Serialize(adfBody) };
+            }
+
+            var result = await ApiHelper.PutAsync(client, $"pages/{Uri.EscapeDataString(id)}", payload, ct);
+            if (result == null) return;
+
+            OutputService.Print(new
+            {
+                Status = "updated",
+                Id = result.Value.GetString("id"),
+                Title = result.Value.GetString("title"),
+                SpaceId = result.Value.GetString("spaceId"),
+                Version = result.Value.GetString("version", "number")
             }, format);
         });
         return cmd;

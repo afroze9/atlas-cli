@@ -29,7 +29,8 @@ public static class ConfigCommands
 
             OutputService.Print(new
             {
-                config.StoryPointsField
+                config.StoryPointsField,
+                config.StartDateField
             }, format);
             return Task.CompletedTask;
         });
@@ -40,6 +41,7 @@ public static class ConfigCommands
     {
         var cmd = new Command("set", "Set a configuration value");
         cmd.Subcommands.Add(BuildSetStoryPointsField());
+        cmd.Subcommands.Add(BuildSetStartDateField());
         return cmd;
     }
 
@@ -61,6 +63,29 @@ public static class ConfigCommands
             config.StoryPointsField = fieldId;
             AuthService.SaveConfig(config);
             Console.WriteLine($"Story points field set to: {fieldId}");
+            return Task.CompletedTask;
+        });
+        return cmd;
+    }
+
+    private static Command BuildSetStartDateField()
+    {
+        var fieldArg = new Argument<string>("field-id") { Description = "Jira custom field ID for start date (e.g. customfield_13503)" };
+        var cmd = new Command("start-date-field", "Set the Jira custom field ID used for start date in team-managed projects") { fieldArg };
+        cmd.SetAction((parseResult, _) =>
+        {
+            var fieldId = parseResult.GetValue(fieldArg)!;
+            var config = AuthService.GetStatus();
+            if (config == null)
+            {
+                OutputService.PrintError("not_configured", "No configuration found. Run 'atlas-cli auth login' first.");
+                Environment.ExitCode = 1;
+                return Task.CompletedTask;
+            }
+
+            config.StartDateField = fieldId;
+            AuthService.SaveConfig(config);
+            Console.WriteLine($"Start date field set to: {fieldId}");
             return Task.CompletedTask;
         });
         return cmd;

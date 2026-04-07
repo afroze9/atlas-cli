@@ -5,16 +5,18 @@ namespace AtlasCli.Commands;
 
 public static class AuthCommands
 {
-    public static Command Build()
+    public static Command Build(Option<string> formatOption)
     {
         var cmd = new Command("auth", "Authenticate to Atlassian Cloud");
-        cmd.Subcommands.Add(BuildLogin());
-        cmd.Subcommands.Add(BuildStatus());
-        cmd.Subcommands.Add(BuildLogout());
+        cmd.Subcommands.Add(BuildLogin(formatOption));
+        cmd.Subcommands.Add(BuildStatus(formatOption));
+        cmd.Subcommands.Add(BuildLogout(formatOption));
+        cmd.Subcommands.Add(BuildSwitch(formatOption));
+        cmd.Subcommands.Add(BuildList(formatOption));
         return cmd;
     }
 
-    private static Command BuildLogin()
+    private static Command BuildLogin(Option<string> formatOption)
     {
         var domainOption = new Option<string>("--domain") { Description = "Atlassian domain (e.g. 'mycompany' for mycompany.atlassian.net)",  Required = true };
         var emailOption = new Option<string>("--email") { Description = "Atlassian account email",  Required = true };
@@ -26,9 +28,9 @@ public static class AuthCommands
             var domain = parseResult.GetValue(domainOption)!;
             var email = parseResult.GetValue(emailOption)!;
             var token = parseResult.GetValue(tokenOption)!;
+            var format = parseResult.GetValue(formatOption)!;
 
             // Validate credentials by calling /myself
-            var config = new AtlasConfig { Domain = domain, Email = email, ApiToken = token };
             using var client = new HttpClient();
             client.BaseAddress = new Uri($"https://{domain}.atlassian.net/rest/api/3/");
             var credentials = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{email}:{token}"));
@@ -47,8 +49,9 @@ public static class AuthCommands
                     Domain = domain,
                     Email = email,
                     DisplayName = result.Value.GetString("displayName"),
-                    AccountId = result.Value.GetString("accountId")
-                });
+                    AccountId = result.Value.GetString("accountId"),
+                    Active = true
+                }, format);
             }
             catch (Exception ex)
             {
@@ -59,38 +62,114 @@ public static class AuthCommands
         return cmd;
     }
 
-    private static Command BuildStatus()
+    private static Command BuildStatus(Option<string> formatOption)
     {
-        var cmd = new Command("status", "Show current login status");
+        var cmd = new Command("status", "Show all logged-in accounts and which is active");
         cmd.SetAction((parseResult, ct) =>
         {
-            var config = AuthService.GetStatus();
-            if (config == null)
+            var format = parseResult.GetValue(formatOption)!;
+            var (accounts, activeKey) = AuthService.GetAllAccounts();
+
+            if (accounts.Count == 0)
             {
-                OutputService.Print(new { IsLoggedIn = false, Message = "Not logged in. Run 'atlas-cli auth login'." });
+                OutputService.Print(new { IsLoggedIn = false, Message = "Not logged in. Run 'atlas-cli auth login'." }, format);
+                return Task.CompletedTask;
+            }
+
+            var list = accounts.Select(kvp => new
+            {
+                Account = kvp.Key,
+                kvp.Value.Domain,
+                kvp.Value.Email,
+                Url = $"https://{kvp.Value.Domain}.atlassian.net",
+                Active = kvp.Key == activeKey
+            }).ToArray();
+
+            OutputService.Print(list, format);
+            return Task.CompletedTask;
+        });
+        return cmd;
+    }
+
+    private static Command BuildList(Option<string> formatOption)
+    {
+        var cmd = new Command("list", "List all logged-in accounts");
+        cmd.SetAction((parseResult, ct) =>
+        {
+            var format = parseResult.GetValue(formatOption)!;
+            var (accounts, activeKey) = AuthService.GetAllAccounts();
+
+            if (accounts.Count == 0)
+            {
+                OutputService.Print(new { Message = "No accounts found. Run 'atlas-cli auth login'." }, format);
+                return Task.CompletedTask;
+            }
+
+            var list = accounts.Select(kvp => new
+            {
+                Account = kvp.Key,
+                kvp.Value.Domain,
+                kvp.Value.Email,
+                Active = kvp.Key == activeKey
+            }).ToArray();
+
+            OutputService.Print(list, format);
+            return Task.CompletedTask;
+        });
+        return cmd;
+    }
+
+    private static Command BuildSwitch(Option<string> formatOption)
+    {
+        var accountArg = new Argument<string>("account") { Description = "Account to switch to (domain/email)" };
+        var cmd = new Command("switch", "Switch active account") { accountArg };
+        cmd.SetAction((parseResult, ct) =>
+        {
+            var account = parseResult.GetValue(accountArg)!;
+            var format = parseResult.GetValue(formatOption)!;
+
+            if (AuthService.Switch(account))
+            {
+                OutputService.Print(new { Status = "switched", ActiveAccount = account }, format);
             }
             else
             {
-                OutputService.Print(new
-                {
-                    IsLoggedIn = true,
-                    config.Domain,
-                    config.Email,
-                    Url = $"https://{config.Domain}.atlassian.net"
-                });
+                var (accounts, _) = AuthService.GetAllAccounts();
+                OutputService.PrintError("account_not_found",
+                    $"Account '{account}' not found. Available accounts: {string.Join(", ", accounts.Keys)}");
+                Environment.ExitCode = 1;
             }
             return Task.CompletedTask;
         });
         return cmd;
     }
 
-    private static Command BuildLogout()
+    private static Command BuildLogout(Option<string> formatOption)
     {
-        var cmd = new Command("logout", "Remove saved credentials");
+        var accountArg = new Argument<string>("account") { Description = "Account to log out (domain/email). Omit to log out the active account.", Arity = ArgumentArity.ZeroOrOne };
+        var cmd = new Command("logout", "Remove saved credentials for an account") { accountArg };
         cmd.SetAction((parseResult, ct) =>
         {
-            AuthService.Logout();
-            OutputService.Print(new { Status = "logged_out" });
+            var account = parseResult.GetValue(accountArg);
+            var format = parseResult.GetValue(formatOption)!;
+
+            var removed = AuthService.Logout(account);
+            if (removed != null)
+            {
+                var (accounts, activeKey) = AuthService.GetAllAccounts();
+                OutputService.Print(new
+                {
+                    Status = "logged_out",
+                    RemovedAccount = removed,
+                    RemainingAccounts = accounts.Count,
+                    ActiveAccount = activeKey
+                }, format);
+            }
+            else
+            {
+                OutputService.PrintError("not_logged_in", "No matching account found.");
+                Environment.ExitCode = 1;
+            }
             return Task.CompletedTask;
         });
         return cmd;
