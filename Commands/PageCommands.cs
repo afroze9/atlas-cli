@@ -102,22 +102,47 @@ public static class PageCommands
         return cmd;
     }
 
+    private static string ResolveBody(string? body, string? bodyFile)
+    {
+        if (!string.IsNullOrEmpty(bodyFile))
+            return File.ReadAllText(bodyFile);
+        return body!;
+    }
+
     private static Command BuildCreate(Option<string> formatOption)
     {
         var spaceIdOption = new Option<string>("--space-id") { Description = "Confluence space ID", Required = true };
         var titleOption = new Option<string>("--title") { Description = "Page title", Required = true };
-        var bodyOption = new Option<string>("--body") { Description = "Page content", Required = true };
+        var bodyOption = new Option<string?>("--body") { Description = "Page content (or use --body-file)" };
+        var bodyFileOption = new Option<string?>("--body-file") { Description = "Read page content from file" };
         var bodyFormatOption = new Option<string>("--body-format") { Description = "Body format: plain, markdown, or adf (default: markdown)", DefaultValueFactory = _ => "markdown" };
         var parentIdOption = new Option<string?>("--parent-id") { Description = "Parent page ID" };
         var statusOption = new Option<string>("--status") { Description = "Page status: current or draft (default: current)", DefaultValueFactory = _ => "current" };
-        var cmd = new Command("create", "Create a Confluence page") { spaceIdOption, titleOption, bodyOption, bodyFormatOption, parentIdOption, statusOption };
+        var cmd = new Command("create", "Create a Confluence page") { spaceIdOption, titleOption, bodyOption, bodyFileOption, bodyFormatOption, parentIdOption, statusOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
             var spaceId = parseResult.GetValue(spaceIdOption)!;
             var title = parseResult.GetValue(titleOption)!;
-            var body = parseResult.GetValue(bodyOption)!;
+            var bodyRaw = parseResult.GetValue(bodyOption);
+            var bodyFile = parseResult.GetValue(bodyFileOption);
             var bodyFormat = parseResult.GetValue(bodyFormatOption)!;
+
+            if (string.IsNullOrEmpty(bodyRaw) && string.IsNullOrEmpty(bodyFile))
+            {
+                OutputService.PrintError("validation", "Either --body or --body-file must be provided.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            string body;
+            try { body = ResolveBody(bodyRaw, bodyFile); }
+            catch (Exception ex)
+            {
+                OutputService.PrintError("file", ex.Message);
+                Environment.ExitCode = 1;
+                return;
+            }
             var parentId = parseResult.GetValue(parentIdOption);
             var status = parseResult.GetValue(statusOption)!;
 
@@ -160,22 +185,33 @@ public static class PageCommands
     {
         var idArg = new Argument<string>("id") { Description = "Page ID" };
         var titleOption = new Option<string?>("--title") { Description = "New page title" };
-        var bodyOption = new Option<string?>("--body") { Description = "New page content" };
+        var bodyOption = new Option<string?>("--body") { Description = "New page content (or use --body-file)" };
+        var bodyFileOption = new Option<string?>("--body-file") { Description = "Read page content from file" };
         var bodyFormatOption = new Option<string>("--body-format") { Description = "Body format: plain, markdown, or adf (default: markdown)", DefaultValueFactory = _ => "markdown" };
         var messageOption = new Option<string?>("--message") { Description = "Version message" };
-        var cmd = new Command("update", "Update a Confluence page") { idArg, titleOption, bodyOption, bodyFormatOption, messageOption };
+        var cmd = new Command("update", "Update a Confluence page") { idArg, titleOption, bodyOption, bodyFileOption, bodyFormatOption, messageOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
             var id = parseResult.GetValue(idArg)!;
             var title = parseResult.GetValue(titleOption);
-            var body = parseResult.GetValue(bodyOption);
+            var bodyRaw = parseResult.GetValue(bodyOption);
+            var bodyFile = parseResult.GetValue(bodyFileOption);
             var bodyFormat = parseResult.GetValue(bodyFormatOption)!;
             var message = parseResult.GetValue(messageOption);
 
+            string? body;
+            try { body = !string.IsNullOrEmpty(bodyRaw) || !string.IsNullOrEmpty(bodyFile) ? ResolveBody(bodyRaw, bodyFile) : null; }
+            catch (Exception ex)
+            {
+                OutputService.PrintError("file", ex.Message);
+                Environment.ExitCode = 1;
+                return;
+            }
+
             if (string.IsNullOrEmpty(title) && string.IsNullOrEmpty(body))
             {
-                OutputService.PrintError("validation", "At least one of --title or --body must be provided.");
+                OutputService.PrintError("validation", "At least one of --title, --body, or --body-file must be provided.");
                 Environment.ExitCode = 1;
                 return;
             }
