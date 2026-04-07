@@ -10,7 +10,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>atlas-cli</ToolCommandName>
     <PackageId>atlas-cli-tool</PackageId>
-    <Version>1.9.3</Version>
+    <Version>1.9.4</Version>
     <PackageIcon>icon.png</PackageIcon>
     <Authors>Afroze Amjad</Authors>
     <Description>A .NET global tool for interacting with Jira and Confluence Cloud — manage work items, projects, sprints, spaces, and pages from the command line.</Description>

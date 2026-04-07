@@ -93,8 +93,8 @@ public static class WorkItemCommands
         var typeOption = new Option<string>("--type") { Description = "Issue type (e.g. Story, Task, Bug)",  Required = true };
         var summaryOption = new Option<string>("--summary") { Description = "Issue summary",  Required = true };
         var descriptionOption = new Option<string?>("--description") { Description = "Issue description" };
-        var descFormatOption = new Option<string>("--description-format") { Description = "Description format: plain or markdown", DefaultValueFactory = _ => "plain" };
-        var assigneeOption = new Option<string?>("--assignee") { Description = "Assignee email or account ID. Use '@me' for self-assign" };
+        var descFormatOption = new Option<string>("--description-format") { Description = "Description format: plain, markdown, or adf", DefaultValueFactory = _ => "plain" };
+        var assigneeOption = new Option<string?>("--assignee") { Description = "Assignee email, account ID, '@me' for self-assign, or 'none' to unassign" };
         var labelOption = new Option<string?>("--label") { Description = "Comma-separated labels" };
         var parentOption = new Option<string?>("--parent") { Description = "Parent issue key" };
         var storyPointsOption = new Option<double?>("--story-points") { Description = "Story point estimate" };
@@ -126,16 +126,24 @@ public static class WorkItemCommands
 
             if (!string.IsNullOrEmpty(description))
             {
-                fields["description"] = descFormat == "markdown"
-                    ? AdfConverter.ConvertMarkdownToAdf(description)
-                    : AdfConverter.CreatePlainTextAdf(description);
+                fields["description"] = descFormat switch
+                {
+                    "markdown" => AdfConverter.ConvertMarkdownToAdf(description),
+                    "adf" => AdfConverter.ParseRawAdf(description),
+                    _ => AdfConverter.CreatePlainTextAdf(description)
+                };
             }
 
             if (!string.IsNullOrEmpty(assignee))
             {
-                var accountId = await ResolveAssignee(client, assignee, ct);
-                if (accountId != null)
-                    fields["assignee"] = new { accountId };
+                if (assignee.Equals("none", StringComparison.OrdinalIgnoreCase))
+                    fields["assignee"] = null!;
+                else
+                {
+                    var accountId = await ResolveAssignee(client, assignee, ct);
+                    if (accountId != null)
+                        fields["assignee"] = new { accountId };
+                }
             }
 
             if (!string.IsNullOrEmpty(labels))
@@ -170,13 +178,15 @@ public static class WorkItemCommands
         var keyArg = new Argument<string>("key") { Description = "Work item key (e.g. PROJ-123)" };
         var summaryOption = new Option<string?>("--summary") { Description = "New summary" };
         var descriptionOption = new Option<string?>("--description") { Description = "New description" };
-        var descFormatOption = new Option<string>("--description-format") { Description = "Description format: plain or markdown", DefaultValueFactory = _ => "plain" };
-        var assigneeOption = new Option<string?>("--assignee") { Description = "New assignee email or account ID" };
+        var descFormatOption = new Option<string>("--description-format") { Description = "Description format: plain, markdown, or adf", DefaultValueFactory = _ => "plain" };
+        var assigneeOption = new Option<string?>("--assignee") { Description = "New assignee email, account ID, or 'none' to unassign" };
         var labelOption = new Option<string?>("--label") { Description = "Comma-separated labels (replaces existing)" };
         var priorityOption = new Option<string?>("--priority") { Description = "Priority name (e.g. High, Medium, Low)" };
         var storyPointsOption = new Option<double?>("--story-points") { Description = "Story point estimate" };
+        var startDateOption = new Option<string?>("--start-date") { Description = "Start date in ISO format (e.g. 2026-04-07)" };
+        var dueDateOption = new Option<string?>("--due-date") { Description = "Due date in ISO format (e.g. 2026-04-14)" };
 
-        var cmd = new Command("edit", "Edit a work item") { keyArg, summaryOption, descriptionOption, descFormatOption, assigneeOption, labelOption, priorityOption, storyPointsOption };
+        var cmd = new Command("edit", "Edit a work item") { keyArg, summaryOption, descriptionOption, descFormatOption, assigneeOption, labelOption, priorityOption, storyPointsOption, startDateOption, dueDateOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
@@ -188,6 +198,8 @@ public static class WorkItemCommands
             var labels = parseResult.GetValue(labelOption);
             var priority = parseResult.GetValue(priorityOption);
             var storyPoints = parseResult.GetValue(storyPointsOption);
+            var startDate = parseResult.GetValue(startDateOption);
+            var dueDate = parseResult.GetValue(dueDateOption);
 
             var projectKey = AllowedSpacesService.ExtractProjectKey(key);
             if (!AllowedSpacesService.CheckAndPrompt(projectKey, "write")) { Environment.ExitCode = 1; return; }
@@ -200,16 +212,24 @@ public static class WorkItemCommands
 
             if (!string.IsNullOrEmpty(description))
             {
-                fields["description"] = descFormat == "markdown"
-                    ? AdfConverter.ConvertMarkdownToAdf(description)
-                    : AdfConverter.CreatePlainTextAdf(description);
+                fields["description"] = descFormat switch
+                {
+                    "markdown" => AdfConverter.ConvertMarkdownToAdf(description),
+                    "adf" => AdfConverter.ParseRawAdf(description),
+                    _ => AdfConverter.CreatePlainTextAdf(description)
+                };
             }
 
             if (!string.IsNullOrEmpty(assignee))
             {
-                var accountId = await ResolveAssignee(client, assignee, ct);
-                if (accountId != null)
-                    fields["assignee"] = new { accountId };
+                if (assignee.Equals("none", StringComparison.OrdinalIgnoreCase))
+                    fields["assignee"] = null!;
+                else
+                {
+                    var accountId = await ResolveAssignee(client, assignee, ct);
+                    if (accountId != null)
+                        fields["assignee"] = new { accountId };
+                }
             }
 
             if (!string.IsNullOrEmpty(labels))
@@ -222,6 +242,18 @@ public static class WorkItemCommands
             {
                 var spField = AuthService.LoadConfig().StoryPointsField;
                 fields[spField] = storyPoints.Value;
+            }
+
+            if (!string.IsNullOrEmpty(startDate) || !string.IsNullOrEmpty(dueDate))
+            {
+                var dateFields = await ResolveDateFields(client, projectKey, ct);
+                if (dateFields == null) return;
+
+                if (!string.IsNullOrEmpty(startDate))
+                    fields[dateFields.Value.StartDateField] = startDate;
+
+                if (!string.IsNullOrEmpty(dueDate))
+                    fields[dateFields.Value.DueDateField] = dueDate;
             }
 
             if (fields.Count == 0)
@@ -289,7 +321,7 @@ public static class WorkItemCommands
     private static Command BuildAssign(Option<string> formatOption)
     {
         var keyOption = new Option<string>("--key") { Description = "Work item key",  Required = true };
-        var assigneeOption = new Option<string>("--assignee") { Description = "Assignee email, account ID, or '@me' for self-assign",  Required = true };
+        var assigneeOption = new Option<string>("--assignee") { Description = "Assignee email, account ID, '@me' for self-assign, or 'none' to unassign",  Required = true };
         var cmd = new Command("assign", "Assign a work item") { keyOption, assigneeOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -301,15 +333,42 @@ public static class WorkItemCommands
             if (!AllowedSpacesService.CheckAndPrompt(projectKey, "write")) { Environment.ExitCode = 1; return; }
 
             using var client = AtlasClientFactory.CreateJiraClient();
+
+            if (assignee.Equals("none", StringComparison.OrdinalIgnoreCase) || assignee == "")
+            {
+                var result = await ApiHelper.PutAsync(client, $"issue/{Uri.EscapeDataString(key)}/assignee", new { accountId = (string?)null }, ct);
+                if (result == null) return;
+                OutputService.Print(new { Status = "unassigned", Key = key }, format);
+                return;
+            }
+
             var accountId = await ResolveAssignee(client, assignee, ct);
             if (accountId == null) return;
 
-            var result = await ApiHelper.PutAsync(client, $"issue/{Uri.EscapeDataString(key)}/assignee", new { accountId }, ct);
-            if (result == null) return;
+            var result2 = await ApiHelper.PutAsync(client, $"issue/{Uri.EscapeDataString(key)}/assignee", new { accountId }, ct);
+            if (result2 == null) return;
 
             OutputService.Print(new { Status = "assigned", Key = key, Assignee = assignee }, format);
         });
         return cmd;
+    }
+
+    private static async Task<(string StartDateField, string DueDateField)?> ResolveDateFields(HttpClient client, string projectKey, CancellationToken ct)
+    {
+        var project = await ApiHelper.GetAsync(client, $"project/{Uri.EscapeDataString(projectKey)}", ct);
+        if (project == null) return null;
+
+        var style = project.Value.GetString("style");
+        var isTeamManaged = string.Equals(style, "next-gen", StringComparison.OrdinalIgnoreCase);
+
+        if (isTeamManaged)
+        {
+            var config = AuthService.LoadConfig();
+            return (config.StartDateField, "duedate");
+        }
+
+        // Company-managed: use standard fields
+        return ("startDate", "duedate");
     }
 
     private static async Task<string?> ResolveAssignee(HttpClient client, string assignee, CancellationToken ct)
@@ -342,10 +401,14 @@ public static class WorkItemCommands
     private static object FormatIssue(JsonElement issue, string descFormat = "plain")
     {
         issue.TryGetProperty("fields", out var fields);
-        var spField = AuthService.LoadConfig().StoryPointsField;
+        var config = AuthService.LoadConfig();
         double? storyPoints = null;
-        if (fields.TryGetProperty(spField, out var spValue) && spValue.ValueKind == JsonValueKind.Number)
+        if (fields.TryGetProperty(config.StoryPointsField, out var spValue) && spValue.ValueKind == JsonValueKind.Number)
             storyPoints = spValue.GetDouble();
+
+        // Try team-managed start date field, fall back to company-managed
+        var startDate = fields.GetString(config.StartDateField) ?? fields.GetString("startDate");
+        var dueDate = fields.GetString("duedate");
 
         object? description = descFormat switch
         {
@@ -362,6 +425,8 @@ public static class WorkItemCommands
             Type = fields.GetString("issuetype", "name"),
             Priority = fields.GetString("priority", "name"),
             StoryPoints = storyPoints,
+            StartDate = startDate,
+            DueDate = dueDate,
             Assignee = fields.GetString("assignee", "displayName"),
             Reporter = fields.GetString("reporter", "displayName"),
             Created = fields.GetString("created"),
