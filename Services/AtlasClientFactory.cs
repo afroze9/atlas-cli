@@ -10,18 +10,21 @@ public static class AtlasClientFactory
     public static HttpClient CreateJiraClient()
     {
         var config = AuthService.LoadConfig();
+        AuthService.ValidateDomain(config.Domain);
         return ConfigureClient(config, $"https://{config.Domain}.atlassian.net/rest/api/3/");
     }
 
     public static HttpClient CreateAgileClient()
     {
         var config = AuthService.LoadConfig();
+        AuthService.ValidateDomain(config.Domain);
         return ConfigureClient(config, $"https://{config.Domain}.atlassian.net/rest/agile/1.0/");
     }
 
     public static HttpClient CreateConfluenceClient()
     {
         var config = AuthService.LoadConfig();
+        AuthService.ValidateDomain(config.Domain);
         return ConfigureClient(config, $"https://{config.Domain}.atlassian.net/wiki/api/v2/");
     }
 

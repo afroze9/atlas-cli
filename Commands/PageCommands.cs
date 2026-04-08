@@ -105,7 +105,14 @@ public static class PageCommands
     private static string ResolveBody(string? body, string? bodyFile)
     {
         if (!string.IsNullOrEmpty(bodyFile))
-            return File.ReadAllText(bodyFile);
+        {
+            var fullPath = Path.GetFullPath(bodyFile);
+            var allowedDir = Path.GetFullPath(Directory.GetCurrentDirectory()) + Path.DirectorySeparatorChar;
+            if (!fullPath.StartsWith(allowedDir, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    $"Access denied: --body-file must reference a file within the current directory. Got: {bodyFile}");
+            return File.ReadAllText(fullPath);
+        }
         return body!;
     }
 

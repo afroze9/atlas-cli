@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace AtlasCli.Services;
@@ -17,6 +19,7 @@ public class AuthService
 
     public static void Login(string domain, string email, string apiToken)
     {
+        ValidateDomain(domain);
         var store = LoadStore();
         var key = AccountKey(domain, email);
 
@@ -39,6 +42,23 @@ public class AuthService
 
         store.ActiveAccount = key;
         SaveStore(store);
+    }
+
+    /// <summary>
+    /// Validates that a domain string is safe for URL construction.
+    /// Only allows alphanumeric characters and hyphens (standard subdomain format).
+    /// </summary>
+    public static void ValidateDomain(string domain)
+    {
+        if (string.IsNullOrWhiteSpace(domain))
+            throw new ArgumentException("Domain cannot be empty.");
+
+        foreach (var c in domain)
+        {
+            if (!char.IsLetterOrDigit(c) && c != '-')
+                throw new ArgumentException(
+                    $"Invalid domain '{domain}'. Domain must contain only letters, digits, and hyphens (e.g. 'mycompany').");
+        }
     }
 
     /// <summary>
@@ -151,6 +171,7 @@ public class AuthService
     {
         if (store.ActiveAccount != null && store.Accounts.TryGetValue(store.ActiveAccount, out var config))
         {
+            config.ApiToken = UnprotectToken(config.ApiToken);
             ApplyEnvOverrides(config);
             return config;
         }
@@ -196,7 +217,48 @@ public class AuthService
     private static void SaveStore(ConfigStore store)
     {
         Directory.CreateDirectory(ConfigDir);
-        File.WriteAllText(ConfigPath, JsonSerializer.Serialize(store, WriteOptions));
+        // Encrypt API tokens before writing
+        var storeToSave = new ConfigStore
+        {
+            ActiveAccount = store.ActiveAccount,
+            Accounts = store.Accounts.ToDictionary(
+                kvp => kvp.Key,
+                kvp => new AtlasConfig
+                {
+                    Domain = kvp.Value.Domain,
+                    Email = kvp.Value.Email,
+                    ApiToken = ProtectToken(kvp.Value.ApiToken),
+                    StoryPointsField = kvp.Value.StoryPointsField,
+                    StartDateField = kvp.Value.StartDateField
+                })
+        };
+        File.WriteAllText(ConfigPath, JsonSerializer.Serialize(storeToSave, WriteOptions));
+    }
+
+    private static string ProtectToken(string token)
+    {
+        if (string.IsNullOrEmpty(token) || token.StartsWith("enc:"))
+            return token;
+
+        if (!OperatingSystem.IsWindows())
+            return token; // DPAPI is Windows-only; other platforms keep plaintext for now
+
+        var bytes = Encoding.UTF8.GetBytes(token);
+        var encrypted = ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser);
+        return "enc:" + Convert.ToBase64String(encrypted);
+    }
+
+    private static string UnprotectToken(string token)
+    {
+        if (string.IsNullOrEmpty(token) || !token.StartsWith("enc:"))
+            return token; // plaintext (legacy or non-Windows)
+
+        if (!OperatingSystem.IsWindows())
+            return token;
+
+        var encrypted = Convert.FromBase64String(token["enc:".Length..]);
+        var decrypted = ProtectedData.Unprotect(encrypted, null, DataProtectionScope.CurrentUser);
+        return Encoding.UTF8.GetString(decrypted);
     }
 
     private static void ApplyEnvOverrides(AtlasConfig config)

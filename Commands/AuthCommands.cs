@@ -30,6 +30,15 @@ public static class AuthCommands
             var token = parseResult.GetValue(tokenOption)!;
             var format = parseResult.GetValue(formatOption)!;
 
+            // Validate domain before using in URL
+            try { AuthService.ValidateDomain(domain); }
+            catch (ArgumentException ex)
+            {
+                OutputService.PrintError("invalid_domain", ex.Message);
+                Environment.ExitCode = 1;
+                return;
+            }
+
             // Validate credentials by calling /myself
             using var client = new HttpClient();
             client.BaseAddress = new Uri($"https://{domain}.atlassian.net/rest/api/3/");
