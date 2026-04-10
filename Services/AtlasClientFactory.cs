@@ -108,6 +108,47 @@ public static class ApiHelper
         Environment.ExitCode = 1;
     }
 
+    /// <summary>
+    /// Like GetAsync but throws AtlasApiException on error instead of printing and returning null.
+    /// Used by service layer for MCP support.
+    /// </summary>
+    public static async Task<JsonElement> GetOrThrowAsync(HttpClient client, string url, CancellationToken ct)
+    {
+        var response = await client.GetAsync(url, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            throw AtlasApiException.FromResponse(response.StatusCode, body);
+        }
+        return await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+    }
+
+    public static async Task<JsonElement> PostOrThrowAsync(HttpClient client, string url, object body, CancellationToken ct)
+    {
+        var response = await client.PostAsJsonAsync(url, body, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var responseBody = await response.Content.ReadAsStringAsync(ct);
+            throw AtlasApiException.FromResponse(response.StatusCode, responseBody);
+        }
+        var content = await response.Content.ReadAsStringAsync(ct);
+        if (string.IsNullOrEmpty(content)) return JsonDocument.Parse("{}").RootElement;
+        return JsonDocument.Parse(content).RootElement;
+    }
+
+    public static async Task<JsonElement> PutOrThrowAsync(HttpClient client, string url, object body, CancellationToken ct)
+    {
+        var response = await client.PutAsJsonAsync(url, body, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var responseBody = await response.Content.ReadAsStringAsync(ct);
+            throw AtlasApiException.FromResponse(response.StatusCode, responseBody);
+        }
+        var content = await response.Content.ReadAsStringAsync(ct);
+        if (string.IsNullOrEmpty(content)) return JsonDocument.Parse("{}").RootElement;
+        return JsonDocument.Parse(content).RootElement;
+    }
+
     public static string? GetString(this JsonElement el, params string[] path)
     {
         var current = el;
@@ -119,5 +160,34 @@ public static class ApiHelper
                 return null;
         }
         return current.ValueKind == JsonValueKind.Null ? null : current.ToString();
+    }
+}
+
+public class AtlasApiException : Exception
+{
+    public System.Net.HttpStatusCode StatusCode { get; }
+
+    public AtlasApiException(System.Net.HttpStatusCode statusCode, string message) : base(message)
+    {
+        StatusCode = statusCode;
+    }
+
+    public static AtlasApiException FromResponse(System.Net.HttpStatusCode statusCode, string body)
+    {
+        try
+        {
+            var errorJson = JsonDocument.Parse(body);
+            if (errorJson.RootElement.TryGetProperty("errorMessages", out var msgs))
+            {
+                var messages = msgs.EnumerateArray().Select(m => m.GetString()).Where(m => !string.IsNullOrEmpty(m));
+                var joined = string.Join("; ", messages);
+                if (!string.IsNullOrEmpty(joined))
+                    return new AtlasApiException(statusCode, joined);
+            }
+            if (errorJson.RootElement.TryGetProperty("message", out var msg))
+                return new AtlasApiException(statusCode, msg.GetString() ?? $"API error ({(int)statusCode})");
+        }
+        catch { }
+        return new AtlasApiException(statusCode, $"API error ({(int)statusCode})");
     }
 }

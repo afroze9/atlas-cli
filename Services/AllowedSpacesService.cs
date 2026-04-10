@@ -31,6 +31,9 @@ public static class AllowedSpacesService
         File.WriteAllText(SpacesPath, JsonSerializer.Serialize(list, JsonOptions));
     }
 
+    public static bool IsBypassed =>
+        string.Equals(Environment.GetEnvironmentVariable("ATLAS_CLI_SKIP_ALLOWLIST"), "true", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// Checks if a space/project is allowed for the given action.
     /// If not found or not allowed, prompts interactively.
@@ -38,6 +41,8 @@ public static class AllowedSpacesService
     /// </summary>
     public static bool CheckAndPrompt(string identifier, string action, string type = "jira", bool interactive = true)
     {
+        if (IsBypassed) return true;
+
         var list = Load();
         var space = list.FindSpace(identifier, type);
 

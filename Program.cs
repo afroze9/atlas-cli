@@ -18,5 +18,6 @@ rootCommand.Subcommands.Add(jiraCommand);
 rootCommand.Subcommands.Add(confluenceCommand);
 rootCommand.Subcommands.Add(PermissionCommands.Build(GlobalOptions.Format));
 rootCommand.Subcommands.Add(ConfigCommands.Build(GlobalOptions.Format));
+rootCommand.Subcommands.Add(McpCommand.Build());
 
 return await rootCommand.Parse(args).InvokeAsync();
