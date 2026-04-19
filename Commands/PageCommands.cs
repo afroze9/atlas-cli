@@ -22,7 +22,8 @@ public static class PageCommands
         var titleOption = new Option<string?>("--title") { Description = "Filter by page title" };
         var limitOption = new Option<int>("--limit") { Description = "Maximum number of pages to return", DefaultValueFactory = _ => 25 };
         var statusOption = new Option<string?>("--status") { Description = "Filter by status (current, draft, trashed)" };
-        var cmd = new Command("list", "List Confluence pages") { spaceIdOption, titleOption, limitOption, statusOption };
+        var subtypeOption = new Option<string?>("--subtype") { Description = "Filter by subtype (page or live)" };
+        var cmd = new Command("list", "List Confluence pages") { spaceIdOption, titleOption, limitOption, statusOption, subtypeOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
@@ -30,6 +31,7 @@ public static class PageCommands
             var title = parseResult.GetValue(titleOption);
             var limit = parseResult.GetValue(limitOption);
             var status = parseResult.GetValue(statusOption);
+            var subtype = parseResult.GetValue(subtypeOption);
 
             if (!string.IsNullOrEmpty(spaceId))
             {
@@ -44,6 +46,8 @@ public static class PageCommands
                 url += $"&title={Uri.EscapeDataString(title)}";
             if (!string.IsNullOrEmpty(status))
                 url += $"&status={Uri.EscapeDataString(status)}";
+            if (!string.IsNullOrEmpty(subtype))
+                url += $"&subtype={Uri.EscapeDataString(subtype)}";
 
             var data = await ApiHelper.GetAsync(client, url, ct);
             if (data == null) return;
@@ -54,6 +58,7 @@ public static class PageCommands
                 Title = p.GetString("title"),
                 SpaceId = p.GetString("spaceId"),
                 Status = p.GetString("status"),
+                Subtype = p.GetString("subtype"),
                 ParentId = p.GetString("parentId"),
                 AuthorId = p.GetString("authorId"),
                 CreatedAt = p.GetString("createdAt"),
@@ -93,6 +98,7 @@ public static class PageCommands
                 Title = p.GetString("title"),
                 SpaceId = pageSpaceId,
                 Status = p.GetString("status"),
+                Subtype = p.GetString("subtype"),
                 AuthorId = p.GetString("authorId"),
                 CreatedAt = p.GetString("createdAt"),
                 Version = p.GetString("version", "number"),
@@ -125,7 +131,8 @@ public static class PageCommands
         var bodyFormatOption = new Option<string>("--body-format") { Description = "Body format: plain, markdown, or adf (default: markdown)", DefaultValueFactory = _ => "markdown" };
         var parentIdOption = new Option<string?>("--parent-id") { Description = "Parent page ID" };
         var statusOption = new Option<string>("--status") { Description = "Page status: current or draft (default: current)", DefaultValueFactory = _ => "current" };
-        var cmd = new Command("create", "Create a Confluence page") { spaceIdOption, titleOption, bodyOption, bodyFileOption, bodyFormatOption, parentIdOption, statusOption };
+        var subtypeOption = new Option<string?>("--subtype") { Description = "Page subtype: page or live (default: page)" };
+        var cmd = new Command("create", "Create a Confluence page") { spaceIdOption, titleOption, bodyOption, bodyFileOption, bodyFormatOption, parentIdOption, statusOption, subtypeOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
@@ -152,6 +159,14 @@ public static class PageCommands
             }
             var parentId = parseResult.GetValue(parentIdOption);
             var status = parseResult.GetValue(statusOption)!;
+            var subtype = parseResult.GetValue(subtypeOption);
+
+            if (!string.IsNullOrEmpty(subtype) && subtype != "page" && subtype != "live")
+            {
+                OutputService.PrintError("validation", "--subtype must be 'page' or 'live'.");
+                Environment.ExitCode = 1;
+                return;
+            }
 
             if (!AllowedSpacesService.CheckAndPrompt(spaceId, "write", "confluence")) { Environment.ExitCode = 1; return; }
 
@@ -171,6 +186,8 @@ public static class PageCommands
             };
             if (!string.IsNullOrEmpty(parentId))
                 payload["parentId"] = parentId;
+            if (subtype == "live")
+                payload["subtype"] = "live";
 
             using var client = AtlasClientFactory.CreateConfluenceClient();
             var result = await ApiHelper.PostAsync(client, "pages", payload, ct);
@@ -182,6 +199,7 @@ public static class PageCommands
                 Id = result.Value.GetString("id"),
                 Title = result.Value.GetString("title"),
                 SpaceId = result.Value.GetString("spaceId"),
+                Subtype = result.Value.GetString("subtype"),
                 Version = result.Value.GetString("version", "number")
             }, format);
         });

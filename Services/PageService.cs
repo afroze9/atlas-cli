@@ -4,7 +4,7 @@ namespace AtlasCli.Services;
 
 public static class PageService
 {
-    public static async Task<object> ListAsync(string? spaceId = null, string? title = null, int limit = 25, string? status = null, CancellationToken ct = default)
+    public static async Task<object> ListAsync(string? spaceId = null, string? title = null, int limit = 25, string? status = null, string? subtype = null, CancellationToken ct = default)
     {
         if (!string.IsNullOrEmpty(spaceId))
         {
@@ -17,6 +17,7 @@ public static class PageService
         if (!string.IsNullOrEmpty(spaceId)) url += $"&space-id={Uri.EscapeDataString(spaceId)}";
         if (!string.IsNullOrEmpty(title)) url += $"&title={Uri.EscapeDataString(title)}";
         if (!string.IsNullOrEmpty(status)) url += $"&status={Uri.EscapeDataString(status)}";
+        if (!string.IsNullOrEmpty(subtype)) url += $"&subtype={Uri.EscapeDataString(subtype)}";
 
         var data = await ApiHelper.GetOrThrowAsync(client, url, ct);
 
@@ -26,6 +27,7 @@ public static class PageService
             Title = p.GetString("title"),
             SpaceId = p.GetString("spaceId"),
             Status = p.GetString("status"),
+            Subtype = p.GetString("subtype"),
             ParentId = p.GetString("parentId"),
             AuthorId = p.GetString("authorId"),
             CreatedAt = p.GetString("createdAt"),
@@ -51,6 +53,7 @@ public static class PageService
             Title = data.GetString("title"),
             SpaceId = pageSpaceId,
             Status = data.GetString("status"),
+            Subtype = data.GetString("subtype"),
             AuthorId = data.GetString("authorId"),
             CreatedAt = data.GetString("createdAt"),
             Version = data.GetString("version", "number"),
@@ -58,10 +61,13 @@ public static class PageService
         };
     }
 
-    public static async Task<object> CreateAsync(string spaceId, string title, string body, string bodyFormat = "markdown", string? parentId = null, string status = "current", CancellationToken ct = default)
+    public static async Task<object> CreateAsync(string spaceId, string title, string body, string bodyFormat = "markdown", string? parentId = null, string status = "current", string? subtype = null, CancellationToken ct = default)
     {
         if (!AllowedSpacesService.CheckAndPrompt(spaceId, "write", "confluence"))
             throw new UnauthorizedAccessException($"Confluence space '{spaceId}' is not allowed for 'write'.");
+
+        if (!string.IsNullOrEmpty(subtype) && subtype != "page" && subtype != "live")
+            throw new InvalidOperationException("subtype must be 'page' or 'live'.");
 
         var adfBody = bodyFormat switch
         {
@@ -79,6 +85,8 @@ public static class PageService
         };
         if (!string.IsNullOrEmpty(parentId))
             payload["parentId"] = parentId;
+        if (subtype == "live")
+            payload["subtype"] = "live";
 
         using var client = AtlasClientFactory.CreateConfluenceClient();
         var result = await ApiHelper.PostOrThrowAsync(client, "pages", payload, ct);
@@ -89,6 +97,7 @@ public static class PageService
             Id = result.GetString("id"),
             Title = result.GetString("title"),
             SpaceId = result.GetString("spaceId"),
+            Subtype = result.GetString("subtype"),
             Version = result.GetString("version", "number")
         };
     }
