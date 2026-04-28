@@ -28,6 +28,60 @@ public static class AtlasClientFactory
         return ConfigureClient(config, $"https://{config.Domain}.atlassian.net/wiki/api/v2/");
     }
 
+    /// <summary>
+    /// Creates an HTTP client for Bitbucket Cloud. When <paramref name="workspace"/> and
+    /// <paramref name="repo"/> are supplied, prefers a stored repo-scoped token before
+    /// falling back to the default Bitbucket creds, then to shared Atlassian creds.
+    /// </summary>
+    public static HttpClient CreateBitbucketClient(string? workspace = null, string? repo = null)
+    {
+        var config = AuthService.LoadConfig();
+        var client = new HttpClient();
+        client.BaseAddress = new Uri("https://api.bitbucket.org/2.0/");
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+        // 1. Per-repo token (always Bearer) — most specific.
+        if (!string.IsNullOrEmpty(workspace) && !string.IsNullOrEmpty(repo))
+        {
+            var key = AuthService.RepoTokenKey(workspace, repo);
+            if (config.BitbucketRepoTokens.TryGetValue(key, out var repoToken) && !string.IsNullOrEmpty(repoToken))
+            {
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", repoToken);
+                return client;
+            }
+        }
+
+        // 2. Account-level Bitbucket credentials.
+        if (!string.IsNullOrEmpty(config.BitbucketToken))
+        {
+            if (string.Equals(config.BitbucketAuthMode, "bearer", StringComparison.OrdinalIgnoreCase))
+            {
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", config.BitbucketToken);
+            }
+            else // basic
+            {
+                var email = string.IsNullOrEmpty(config.BitbucketEmail) ? config.Email : config.BitbucketEmail;
+                var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{email}:{config.BitbucketToken}"));
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+            }
+            return client;
+        }
+
+        // 3. Shared Atlassian creds (only works if the token was created with Bitbucket scopes).
+        var fallback = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{config.Email}:{config.ApiToken}"));
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", fallback);
+        return client;
+    }
+
+    /// <summary>
+    /// Returns the configured default Bitbucket workspace, or null if not set.
+    /// </summary>
+    public static string? GetDefaultBitbucketWorkspace()
+    {
+        var config = AuthService.LoadConfig();
+        return string.IsNullOrEmpty(config.BitbucketWorkspace) ? null : config.BitbucketWorkspace;
+    }
+
     private static HttpClient ConfigureClient(AtlasConfig config, string baseUrl)
     {
         var client = new HttpClient();
@@ -98,6 +152,14 @@ public static class ApiHelper
             if (errorJson.RootElement.TryGetProperty("message", out var msg))
             {
                 OutputService.PrintError(((int)response.StatusCode).ToString(), msg.GetString() ?? "");
+                Environment.ExitCode = 1;
+                return;
+            }
+            if (errorJson.RootElement.TryGetProperty("error", out var errObj)
+                && errObj.ValueKind == JsonValueKind.Object
+                && errObj.TryGetProperty("message", out var errMsg))
+            {
+                OutputService.PrintError(((int)response.StatusCode).ToString(), errMsg.GetString() ?? "");
                 Environment.ExitCode = 1;
                 return;
             }
@@ -186,6 +248,11 @@ public class AtlasApiException : Exception
             }
             if (errorJson.RootElement.TryGetProperty("message", out var msg))
                 return new AtlasApiException(statusCode, msg.GetString() ?? $"API error ({(int)statusCode})");
+            // Bitbucket shape: { "type": "error", "error": { "message": "..." } }
+            if (errorJson.RootElement.TryGetProperty("error", out var errObj)
+                && errObj.ValueKind == JsonValueKind.Object
+                && errObj.TryGetProperty("message", out var errMsg))
+                return new AtlasApiException(statusCode, errMsg.GetString() ?? $"API error ({(int)statusCode})");
         }
         catch { }
         return new AtlasApiException(statusCode, $"API error ({(int)statusCode})");

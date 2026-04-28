@@ -157,6 +157,108 @@ public class AuthService
         return null!; // unreachable
     }
 
+    /// <summary>
+    /// Stores Bitbucket-specific credentials on the active account.
+    /// Mode: "basic" (email + scoped API token) or "bearer" (workspace/repo access token).
+    /// </summary>
+    public static void BitbucketLogin(string mode, string? email, string token, string? workspace)
+    {
+        var store = LoadStore();
+        if (store.ActiveAccount == null || !store.Accounts.TryGetValue(store.ActiveAccount, out var config))
+            throw new InvalidOperationException("No active Atlassian account. Run 'atlas-cli auth login' first.");
+
+        // The store loaded above has encrypted tokens; preserve them by re-loading the active config via GetActiveAccount
+        // semantics: write to the in-memory config, then SaveStore which re-encrypts.
+        config.ApiToken = UnprotectToken(config.ApiToken);
+        DecryptBitbucketTokens(config);
+
+        config.BitbucketAuthMode = mode;
+        config.BitbucketEmail = email ?? "";
+        config.BitbucketToken = token;
+        if (!string.IsNullOrEmpty(workspace))
+            config.BitbucketWorkspace = workspace;
+
+        SaveStore(store);
+    }
+
+    public static void BitbucketSetWorkspace(string workspace)
+    {
+        var store = LoadStore();
+        if (store.ActiveAccount == null || !store.Accounts.TryGetValue(store.ActiveAccount, out var config))
+            throw new InvalidOperationException("No active Atlassian account. Run 'atlas-cli auth login' first.");
+
+        config.ApiToken = UnprotectToken(config.ApiToken);
+        DecryptBitbucketTokens(config);
+
+        config.BitbucketWorkspace = workspace;
+        SaveStore(store);
+    }
+
+    public static void BitbucketLogout()
+    {
+        var store = LoadStore();
+        if (store.ActiveAccount == null || !store.Accounts.TryGetValue(store.ActiveAccount, out var config))
+            return;
+
+        config.ApiToken = UnprotectToken(config.ApiToken);
+        DecryptBitbucketTokens(config);
+        config.BitbucketAuthMode = "";
+        config.BitbucketEmail = "";
+        config.BitbucketToken = "";
+        config.BitbucketWorkspace = "";
+        config.BitbucketRepoTokens = new();
+        SaveStore(store);
+    }
+
+    public static string RepoTokenKey(string workspace, string repo) =>
+        $"{workspace.ToLowerInvariant()}/{repo.ToLowerInvariant()}";
+
+    public static void BitbucketAddRepoToken(string workspace, string repo, string token)
+    {
+        var store = LoadStore();
+        if (store.ActiveAccount == null || !store.Accounts.TryGetValue(store.ActiveAccount, out var config))
+            throw new InvalidOperationException("No active Atlassian account. Run 'atlas-cli auth login' first.");
+
+        config.ApiToken = UnprotectToken(config.ApiToken);
+        DecryptBitbucketTokens(config);
+
+        config.BitbucketRepoTokens[RepoTokenKey(workspace, repo)] = token;
+        SaveStore(store);
+    }
+
+    public static bool BitbucketRemoveRepoToken(string workspace, string repo)
+    {
+        var store = LoadStore();
+        if (store.ActiveAccount == null || !store.Accounts.TryGetValue(store.ActiveAccount, out var config))
+            return false;
+
+        config.ApiToken = UnprotectToken(config.ApiToken);
+        DecryptBitbucketTokens(config);
+
+        var removed = config.BitbucketRepoTokens.Remove(RepoTokenKey(workspace, repo));
+        if (removed) SaveStore(store);
+        return removed;
+    }
+
+    public static IReadOnlyList<string> BitbucketListRepoTokenKeys()
+    {
+        var config = GetStatus();
+        if (config == null) return Array.Empty<string>();
+        return config.BitbucketRepoTokens.Keys.OrderBy(k => k).ToList();
+    }
+
+    private static void DecryptBitbucketTokens(AtlasConfig config)
+    {
+        if (!string.IsNullOrEmpty(config.BitbucketToken))
+            config.BitbucketToken = UnprotectToken(config.BitbucketToken);
+        if (config.BitbucketRepoTokens.Count > 0)
+        {
+            config.BitbucketRepoTokens = config.BitbucketRepoTokens.ToDictionary(
+                kvp => kvp.Key,
+                kvp => UnprotectToken(kvp.Value));
+        }
+    }
+
     public static void SaveConfig(AtlasConfig config)
     {
         var store = LoadStore();
@@ -172,6 +274,14 @@ public class AuthService
         if (store.ActiveAccount != null && store.Accounts.TryGetValue(store.ActiveAccount, out var config))
         {
             config.ApiToken = UnprotectToken(config.ApiToken);
+            if (!string.IsNullOrEmpty(config.BitbucketToken))
+                config.BitbucketToken = UnprotectToken(config.BitbucketToken);
+            if (config.BitbucketRepoTokens.Count > 0)
+            {
+                config.BitbucketRepoTokens = config.BitbucketRepoTokens.ToDictionary(
+                    kvp => kvp.Key,
+                    kvp => UnprotectToken(kvp.Value));
+            }
             ApplyEnvOverrides(config);
             return config;
         }
@@ -229,7 +339,16 @@ public class AuthService
                     Email = kvp.Value.Email,
                     ApiToken = ProtectToken(kvp.Value.ApiToken),
                     StoryPointsField = kvp.Value.StoryPointsField,
-                    StartDateField = kvp.Value.StartDateField
+                    StartDateField = kvp.Value.StartDateField,
+                    BitbucketAuthMode = kvp.Value.BitbucketAuthMode,
+                    BitbucketEmail = kvp.Value.BitbucketEmail,
+                    BitbucketToken = string.IsNullOrEmpty(kvp.Value.BitbucketToken)
+                        ? ""
+                        : ProtectToken(kvp.Value.BitbucketToken),
+                    BitbucketWorkspace = kvp.Value.BitbucketWorkspace,
+                    BitbucketRepoTokens = kvp.Value.BitbucketRepoTokens.ToDictionary(
+                        e => e.Key,
+                        e => string.IsNullOrEmpty(e.Value) ? "" : ProtectToken(e.Value)),
                 })
         };
         File.WriteAllText(ConfigPath, JsonSerializer.Serialize(storeToSave, WriteOptions));
@@ -286,4 +405,18 @@ public class AtlasConfig
     public string ApiToken { get; set; } = "";
     public string StoryPointsField { get; set; } = "customfield_10016";
     public string StartDateField { get; set; } = "customfield_13503";
+
+    // Bitbucket-specific credentials (optional). When unset, Bitbucket falls back to the shared Atlassian creds above.
+    // AuthMode: "basic" (email + scoped API token) or "bearer" (workspace/repo access token).
+    public string BitbucketAuthMode { get; set; } = "";
+    public string BitbucketEmail { get; set; } = "";
+    public string BitbucketToken { get; set; } = "";
+    public string BitbucketWorkspace { get; set; } = "";
+
+    /// <summary>
+    /// Optional per-repo Bitbucket access tokens, keyed by "workspace/repo".
+    /// When making a request for a specific repo, this is preferred over BitbucketToken.
+    /// Tokens are stored encrypted on disk on Windows (DPAPI), same as ApiToken/BitbucketToken.
+    /// </summary>
+    public Dictionary<string, string> BitbucketRepoTokens { get; set; } = new();
 }

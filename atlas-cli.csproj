@@ -10,15 +10,15 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>atlas-cli</ToolCommandName>
     <PackageId>atlas-cli-tool</PackageId>
-    <Version>1.11.0</Version>
+    <Version>1.14.0</Version>
     <PackageIcon>icon.png</PackageIcon>
     <Authors>Afroze Amjad</Authors>
-    <Description>A .NET global tool for interacting with Jira and Confluence Cloud — manage work items, projects, sprints, spaces, and pages from the command line.</Description>
+    <Description>A .NET global tool for interacting with Jira, Confluence, and Bitbucket Cloud — manage work items, projects, sprints, spaces, pages, and pipelines from the command line.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageProjectUrl>https://github.com/afroze9/atlas-cli</PackageProjectUrl>
     <RepositoryUrl>https://github.com/afroze9/atlas-cli</RepositoryUrl>
-    <PackageTags>cli;jira;confluence;atlassian;dotnet-tool</PackageTags>
+    <PackageTags>cli;jira;confluence;bitbucket;atlassian;dotnet-tool</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
