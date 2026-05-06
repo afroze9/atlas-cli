@@ -35,6 +35,106 @@ public static class AdfConverter
         };
     }
 
+    /// <summary>
+    /// Prepends @-mention nodes to the first paragraph of an ADF document. If the doc has no
+    /// paragraph block, a new one is inserted at the top. Each mention is followed by a space.
+    /// </summary>
+    public static object PrependMentions(object adf, IEnumerable<string> accountIds)
+    {
+        var ids = accountIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .ToList();
+        if (ids.Count == 0) return adf;
+
+        var mentionInlines = new List<object>();
+        foreach (var id in ids)
+        {
+            mentionInlines.Add(new Dictionary<string, object>
+            {
+                ["type"] = "mention",
+                ["attrs"] = new Dictionary<string, object> { ["id"] = id }
+            });
+            mentionInlines.Add(new Dictionary<string, object>
+            {
+                ["type"] = "text",
+                ["text"] = " "
+            });
+        }
+
+        var json = JsonSerializer.Serialize(adf);
+        var root = JsonSerializer.Deserialize<JsonElement>(json);
+
+        var blocks = new List<object>();
+        var merged = false;
+
+        if (root.TryGetProperty("content", out var contentEl) && contentEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var block in contentEl.EnumerateArray())
+            {
+                if (!merged && block.GetString("type") == "paragraph")
+                {
+                    var inlines = new List<object>(mentionInlines);
+                    if (block.TryGetProperty("content", out var pc) && pc.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var inline in pc.EnumerateArray())
+                            inlines.Add(JsonElementToObject(inline));
+                    }
+                    blocks.Add(new Dictionary<string, object>
+                    {
+                        ["type"] = "paragraph",
+                        ["content"] = inlines
+                    });
+                    merged = true;
+                }
+                else
+                {
+                    blocks.Add(JsonElementToObject(block));
+                }
+            }
+        }
+
+        if (!merged)
+        {
+            blocks.Insert(0, new Dictionary<string, object>
+            {
+                ["type"] = "paragraph",
+                ["content"] = mentionInlines
+            });
+        }
+
+        return new Dictionary<string, object>
+        {
+            ["type"] = "doc",
+            ["version"] = 1,
+            ["content"] = blocks
+        };
+    }
+
+    private static object JsonElementToObject(JsonElement el)
+    {
+        switch (el.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var obj = new Dictionary<string, object>();
+                foreach (var prop in el.EnumerateObject())
+                    obj[prop.Name] = JsonElementToObject(prop.Value);
+                return obj;
+            case JsonValueKind.Array:
+                return el.EnumerateArray().Select(JsonElementToObject).ToList();
+            case JsonValueKind.String:
+                return el.GetString()!;
+            case JsonValueKind.Number:
+                return el.TryGetInt64(out var l) ? l : el.GetDouble();
+            case JsonValueKind.True:
+                return true;
+            case JsonValueKind.False:
+                return false;
+            default:
+                return null!;
+        }
+    }
+
     public static object ConvertMarkdownToAdf(string markdown)
     {
         var pipeline = new MarkdownPipelineBuilder().Build();

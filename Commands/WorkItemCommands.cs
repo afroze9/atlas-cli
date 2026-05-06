@@ -16,6 +16,7 @@ public static class WorkItemCommands
         cmd.Subcommands.Add(BuildTransition(formatOption));
         cmd.Subcommands.Add(BuildAssign(formatOption));
         cmd.Subcommands.Add(CommentCommands.Build(formatOption));
+        cmd.Subcommands.Add(LinkCommands.Build(formatOption));
         return cmd;
     }
 
@@ -185,8 +186,9 @@ public static class WorkItemCommands
         var storyPointsOption = new Option<double?>("--story-points") { Description = "Story point estimate" };
         var startDateOption = new Option<string?>("--start-date") { Description = "Start date in ISO format (e.g. 2026-04-07)" };
         var dueDateOption = new Option<string?>("--due-date") { Description = "Due date in ISO format (e.g. 2026-04-14)" };
+        var parentOption = new Option<string?>("--parent") { Description = "New parent/epic issue key, or 'none' to remove parent" };
 
-        var cmd = new Command("edit", "Edit a work item") { keyArg, summaryOption, descriptionOption, descFormatOption, assigneeOption, labelOption, priorityOption, storyPointsOption, startDateOption, dueDateOption };
+        var cmd = new Command("edit", "Edit a work item") { keyArg, summaryOption, descriptionOption, descFormatOption, assigneeOption, labelOption, priorityOption, storyPointsOption, startDateOption, dueDateOption, parentOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
@@ -200,6 +202,7 @@ public static class WorkItemCommands
             var storyPoints = parseResult.GetValue(storyPointsOption);
             var startDate = parseResult.GetValue(startDateOption);
             var dueDate = parseResult.GetValue(dueDateOption);
+            var parent = parseResult.GetValue(parentOption);
 
             var projectKey = AllowedSpacesService.ExtractProjectKey(key);
             if (!AllowedSpacesService.CheckAndPrompt(projectKey, "write")) { Environment.ExitCode = 1; return; }
@@ -254,6 +257,13 @@ public static class WorkItemCommands
 
                 if (!string.IsNullOrEmpty(dueDate))
                     fields[dateFields.Value.DueDateField] = dueDate;
+            }
+
+            if (!string.IsNullOrEmpty(parent))
+            {
+                fields["parent"] = parent.Equals("none", StringComparison.OrdinalIgnoreCase)
+                    ? null!
+                    : new { key = parent };
             }
 
             if (fields.Count == 0)
@@ -428,7 +438,9 @@ public static class WorkItemCommands
             StartDate = startDate,
             DueDate = dueDate,
             Assignee = fields.GetString("assignee", "displayName"),
+            AssigneeId = fields.GetString("assignee", "accountId"),
             Reporter = fields.GetString("reporter", "displayName"),
+            ReporterId = fields.GetString("reporter", "accountId"),
             Created = fields.GetString("created"),
             Updated = fields.GetString("updated"),
             Description = description

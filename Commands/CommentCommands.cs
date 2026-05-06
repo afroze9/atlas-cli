@@ -34,6 +34,7 @@ public static class CommentCommands
             {
                 Id = c.GetString("id"),
                 Author = c.GetString("author", "displayName"),
+                AuthorId = c.GetString("author", "accountId"),
                 Created = c.GetString("created"),
                 Updated = c.GetString("updated"),
                 Body = ExtractPlainText(c)
@@ -49,27 +50,34 @@ public static class CommentCommands
         var keyOption = new Option<string>("--key") { Description = "Work item key (e.g. PROJ-123)",  Required = true };
         var bodyOption = new Option<string>("--body") { Description = "Comment text",  Required = true };
         var bodyFormatOption = new Option<string>("--body-format") { Description = "Body format: plain, markdown, or adf", DefaultValueFactory = _ => "plain" };
-        var cmd = new Command("create", "Add a comment to a work item") { keyOption, bodyOption, bodyFormatOption };
+        var mentionOption = new Option<string?>("--mention") { Description = "Comma-separated Atlassian account IDs to @-mention (prepended to body). Use 'jira user search' to find IDs." };
+        var cmd = new Command("create", "Add a comment to a work item") { keyOption, bodyOption, bodyFormatOption, mentionOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
             var key = parseResult.GetValue(keyOption)!;
             var body = parseResult.GetValue(bodyOption)!;
             var bodyFormat = parseResult.GetValue(bodyFormatOption)!;
+            var mentions = parseResult.GetValue(mentionOption);
 
             var projectKey = AllowedSpacesService.ExtractProjectKey(key);
             if (!AllowedSpacesService.CheckAndPrompt(projectKey, "write")) { Environment.ExitCode = 1; return; }
 
             using var client = AtlasClientFactory.CreateJiraClient();
-            var payload = new
+            var adf = bodyFormat switch
             {
-                body = bodyFormat switch
-                {
-                    "markdown" => AdfConverter.ConvertMarkdownToAdf(body),
-                    "adf" => AdfConverter.ParseRawAdf(body),
-                    _ => AdfConverter.CreatePlainTextAdf(body)
-                }
+                "markdown" => AdfConverter.ConvertMarkdownToAdf(body),
+                "adf" => AdfConverter.ParseRawAdf(body),
+                _ => AdfConverter.CreatePlainTextAdf(body)
             };
+
+            if (!string.IsNullOrEmpty(mentions))
+            {
+                var ids = mentions.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                adf = AdfConverter.PrependMentions(adf, ids);
+            }
+
+            var payload = new { body = adf };
 
             var result = await ApiHelper.PostAsync(client, $"issue/{Uri.EscapeDataString(key)}/comment", payload, ct);
             if (result == null) return;

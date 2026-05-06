@@ -95,7 +95,8 @@ public static class WorkItemService
 
     public static async Task<object> EditAsync(string key, string? summary = null, string? description = null,
         string descFormat = "plain", string? assignee = null, string? labels = null, string? priority = null,
-        double? storyPoints = null, string? startDate = null, string? dueDate = null, CancellationToken ct = default)
+        double? storyPoints = null, string? startDate = null, string? dueDate = null, string? parent = null,
+        CancellationToken ct = default)
     {
         var projectKey = AllowedSpacesService.ExtractProjectKey(key);
         if (!AllowedSpacesService.CheckAndPrompt(projectKey, "write"))
@@ -144,6 +145,13 @@ public static class WorkItemService
             var dateFields = await ResolveDateFields(client, projectKey, ct);
             if (!string.IsNullOrEmpty(startDate)) fieldDict[dateFields.StartDateField] = startDate;
             if (!string.IsNullOrEmpty(dueDate)) fieldDict[dateFields.DueDateField] = dueDate;
+        }
+
+        if (!string.IsNullOrEmpty(parent))
+        {
+            fieldDict["parent"] = parent.Equals("none", StringComparison.OrdinalIgnoreCase)
+                ? null!
+                : new { key = parent };
         }
 
         if (fieldDict.Count == 0)
@@ -267,7 +275,9 @@ public static class WorkItemService
             StartDate = startDate,
             DueDate = dueDate,
             Assignee = fields.GetString("assignee", "displayName"),
+            AssigneeId = fields.GetString("assignee", "accountId"),
             Reporter = fields.GetString("reporter", "displayName"),
+            ReporterId = fields.GetString("reporter", "accountId"),
             Created = fields.GetString("created"),
             Updated = fields.GetString("updated"),
             Description = description

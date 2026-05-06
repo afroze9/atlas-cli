@@ -132,6 +132,17 @@ public static class ApiHelper
         return JsonDocument.Parse(content).RootElement;
     }
 
+    public static async Task<bool> DeleteAsync(HttpClient client, string url, CancellationToken ct)
+    {
+        var response = await client.DeleteAsync(url, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            await HandleError(response, ct);
+            return false;
+        }
+        return true;
+    }
+
     private static async Task HandleError(HttpResponseMessage response, CancellationToken ct)
     {
         var body = await response.Content.ReadAsStringAsync(ct);
@@ -209,6 +220,16 @@ public static class ApiHelper
         var content = await response.Content.ReadAsStringAsync(ct);
         if (string.IsNullOrEmpty(content)) return JsonDocument.Parse("{}").RootElement;
         return JsonDocument.Parse(content).RootElement;
+    }
+
+    public static async Task DeleteOrThrowAsync(HttpClient client, string url, CancellationToken ct)
+    {
+        var response = await client.DeleteAsync(url, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var responseBody = await response.Content.ReadAsStringAsync(ct);
+            throw AtlasApiException.FromResponse(response.StatusCode, responseBody);
+        }
     }
 
     public static string? GetString(this JsonElement el, params string[] path)

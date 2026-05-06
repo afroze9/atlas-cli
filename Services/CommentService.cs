@@ -17,29 +17,34 @@ public static class CommentService
         {
             Id = c.GetString("id"),
             Author = c.GetString("author", "displayName"),
+            AuthorId = c.GetString("author", "accountId"),
             Created = c.GetString("created"),
             Updated = c.GetString("updated"),
             Body = ExtractPlainText(c)
         }).ToList();
     }
 
-    public static async Task<object> CreateAsync(string key, string body, string bodyFormat = "plain", CancellationToken ct = default)
+    public static async Task<object> CreateAsync(string key, string body, string bodyFormat = "plain", string? mentions = null, CancellationToken ct = default)
     {
         var projectKey = AllowedSpacesService.ExtractProjectKey(key);
         if (!AllowedSpacesService.CheckAndPrompt(projectKey, "write"))
             throw new UnauthorizedAccessException($"Project '{projectKey}' is not allowed for 'write'.");
 
         using var client = AtlasClientFactory.CreateJiraClient();
-        var payload = new
+        var adf = bodyFormat switch
         {
-            body = bodyFormat switch
-            {
-                "markdown" => AdfConverter.ConvertMarkdownToAdf(body),
-                "adf" => AdfConverter.ParseRawAdf(body),
-                _ => AdfConverter.CreatePlainTextAdf(body)
-            }
+            "markdown" => AdfConverter.ConvertMarkdownToAdf(body),
+            "adf" => AdfConverter.ParseRawAdf(body),
+            _ => AdfConverter.CreatePlainTextAdf(body)
         };
 
+        if (!string.IsNullOrEmpty(mentions))
+        {
+            var ids = mentions.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            adf = AdfConverter.PrependMentions(adf, ids);
+        }
+
+        var payload = new { body = adf };
         var result = await ApiHelper.PostOrThrowAsync(client, $"issue/{Uri.EscapeDataString(key)}/comment", payload, ct);
         return new
         {

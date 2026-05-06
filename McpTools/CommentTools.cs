@@ -20,15 +20,16 @@ public static class CommentTools
         catch (Exception ex) { return McpAtlasHelper.HandleException(ex); }
     }
 
-    [McpServerTool(Name = "jira_comment_create"), Description("Add a comment to a Jira work item")]
+    [McpServerTool(Name = "jira_comment_create"), Description("Add a comment to a Jira work item, optionally @-mentioning users by accountId")]
     public static async Task<string> Create(
         [Description("Work item key (e.g. PROJ-123)")] string key,
         [Description("Comment text")] string body,
-        [Description("Body format: plain, markdown, or adf")] string bodyFormat = "plain")
+        [Description("Body format: plain, markdown, or adf")] string bodyFormat = "plain",
+        [Description("Comma-separated Atlassian account IDs to @-mention (prepended to body). Use jira_user_search to find IDs.")] string? mentions = null)
     {
         try
         {
-            var result = await CommentService.CreateAsync(key, body, bodyFormat);
+            var result = await CommentService.CreateAsync(key, body, bodyFormat, mentions);
             return McpAtlasHelper.ToJson(result);
         }
         catch (AtlasApiException ex) { return McpAtlasHelper.HandleApiError(ex); }

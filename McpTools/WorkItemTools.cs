@@ -71,11 +71,12 @@ public static class WorkItemTools
         [Description("Priority name (e.g. High, Medium, Low)")] string? priority = null,
         [Description("Story point estimate")] double? storyPoints = null,
         [Description("Start date in ISO format (e.g. 2026-04-07)")] string? startDate = null,
-        [Description("Due date in ISO format (e.g. 2026-04-14)")] string? dueDate = null)
+        [Description("Due date in ISO format (e.g. 2026-04-14)")] string? dueDate = null,
+        [Description("New parent/epic issue key, or 'none' to remove parent")] string? parent = null)
     {
         try
         {
-            var result = await WorkItemService.EditAsync(key, summary, description, descriptionFormat, assignee, labels, priority, storyPoints, startDate, dueDate);
+            var result = await WorkItemService.EditAsync(key, summary, description, descriptionFormat, assignee, labels, priority, storyPoints, startDate, dueDate, parent);
             return McpAtlasHelper.ToJson(result);
         }
         catch (AtlasApiException ex) { return McpAtlasHelper.HandleApiError(ex); }
