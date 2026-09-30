@@ -9,6 +9,7 @@ var jiraCommand = new Command("jira", "Jira Cloud operations");
 jiraCommand.Subcommands.Add(WorkItemCommands.Build(GlobalOptions.Format));
 jiraCommand.Subcommands.Add(ProjectCommands.Build(GlobalOptions.Format));
 jiraCommand.Subcommands.Add(UserCommands.Build(GlobalOptions.Format));
+jiraCommand.Subcommands.Add(FieldCommands.Build(GlobalOptions.Format));
 
 var confluenceCommand = new Command("confluence", "Confluence Cloud operations");
 confluenceCommand.Subcommands.Add(SpaceCommands.Build(GlobalOptions.Format));

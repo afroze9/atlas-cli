@@ -4,7 +4,7 @@ A .NET CLI tool for interacting with Jira, Confluence, and Bitbucket Cloud.
 
 ## Features
 
-- **Jira** — work items (issues) and projects
+- **Jira** — work items (issues), projects, and runtime discovery of system and custom fields
 - **Confluence** — spaces and pages
 - **Bitbucket** — workspaces, repositories, and pipelines (status, steps, logs, run/stop)
 - **Auth** — token-based authentication management with multi-account, scoped Bitbucket login, and per-repo access tokens
@@ -25,6 +25,7 @@ atlas-cli auth login
 # Jira
 atlas-cli jira workitem list
 atlas-cli jira project list
+atlas-cli jira field list --query customer
 
 # Confluence
 atlas-cli confluence space list
@@ -62,6 +63,31 @@ Grant access, then retry: atlas-cli permissions allow PROJ --type jira --actions
 ```
 
 Run the suggested command, then retry the original command. This behavior prevents scripts, MCP clients, and other AI tools from blocking while waiting for terminal input.
+
+## Dynamic Jira Fields
+
+atlas-cli discovers Jira fields from the active site's metadata instead of relying on a fixed field list. You can inspect the global field catalog, the fields available while creating a particular issue type, or the fields editable on an existing issue:
+
+```bash
+atlas-cli jira field list --query customer
+atlas-cli jira field create-meta --project PROJ --issue-type Story
+atlas-cli jira field edit-meta PROJ-123
+```
+
+Create and edit commands accept additional fields as JSON. Field IDs are the safest identifiers; a unique field name is also accepted and resolved against the relevant create/edit metadata. Values are normalized using Jira's schema and allowed values where possible.
+
+```bash
+atlas-cli jira workitem create \
+  --project PROJ \
+  --type Story \
+  --summary "Provision customer" \
+  --fields-json '{"customfield_10123":{"id":"10001"},"Customer tier":"Gold"}'
+
+atlas-cli jira workitem edit PROJ-123 \
+  --fields-json '{"customfield_10456":"2026-10-15"}'
+```
+
+Create commands validate context-specific required fields before submitting the issue. Issue view and search output also includes nonstandard values under `AdditionalFields`, along with Jira's field name and schema when available.
 
 ## Bitbucket Authentication
 
@@ -130,6 +156,9 @@ Add to your Claude Desktop config (`claude_desktop_config.json`):
 | `jira_comment_create` | Add a comment |
 | `jira_project_list` | List projects |
 | `jira_project_view` | View project details |
+| `jira_field_list` | List system and custom fields with IDs and schemas |
+| `jira_create_field_metadata` | Get fields, schemas, defaults, and allowed values for a project and issue type |
+| `jira_edit_field_metadata` | Get fields currently editable on a work item |
 
 **Confluence:**
 

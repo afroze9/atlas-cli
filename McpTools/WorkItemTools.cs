@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json;
 using AtlasCli.Services;
 using ModelContextProtocol.Server;
 
@@ -49,11 +50,12 @@ public static class WorkItemTools
         [Description("Assignee email, account ID, '@me', or 'none'")] string? assignee = null,
         [Description("Comma-separated labels")] string? labels = null,
         [Description("Parent issue key")] string? parent = null,
-        [Description("Story point estimate")] double? storyPoints = null)
+        [Description("Story point estimate")] double? storyPoints = null,
+        [Description("Additional Jira fields keyed by field ID or unique field name. Query jira_create_field_metadata first for schemas and allowed values.")] Dictionary<string, JsonElement>? additionalFields = null)
     {
         try
         {
-            var result = await WorkItemService.CreateAsync(project, type, summary, description, descriptionFormat, assignee, labels, parent, storyPoints);
+            var result = await WorkItemService.CreateAsync(project, type, summary, description, descriptionFormat, assignee, labels, parent, storyPoints, additionalFields);
             return McpAtlasHelper.ToJson(result);
         }
         catch (AtlasApiException ex) { return McpAtlasHelper.HandleApiError(ex); }
@@ -72,11 +74,12 @@ public static class WorkItemTools
         [Description("Story point estimate")] double? storyPoints = null,
         [Description("Start date in ISO format (e.g. 2026-04-07)")] string? startDate = null,
         [Description("Due date in ISO format (e.g. 2026-04-14)")] string? dueDate = null,
-        [Description("New parent/epic issue key, or 'none' to remove parent")] string? parent = null)
+        [Description("New parent/epic issue key, or 'none' to remove parent")] string? parent = null,
+        [Description("Additional Jira fields keyed by field ID or unique field name. Query jira_edit_field_metadata first for schemas and allowed values.")] Dictionary<string, JsonElement>? additionalFields = null)
     {
         try
         {
-            var result = await WorkItemService.EditAsync(key, summary, description, descriptionFormat, assignee, labels, priority, storyPoints, startDate, dueDate, parent);
+            var result = await WorkItemService.EditAsync(key, summary, description, descriptionFormat, assignee, labels, priority, storyPoints, startDate, dueDate, parent, additionalFields);
             return McpAtlasHelper.ToJson(result);
         }
         catch (AtlasApiException ex) { return McpAtlasHelper.HandleApiError(ex); }

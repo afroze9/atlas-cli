@@ -37,15 +37,15 @@ public static class WorkItemCommands
             if (!AllowedSpacesService.CheckAndPrompt(projectKey, "read")) { Environment.ExitCode = 1; return; }
 
             using var client = AtlasClientFactory.CreateJiraClient();
-            var url = $"issue/{Uri.EscapeDataString(key)}";
+            var url = $"issue/{Uri.EscapeDataString(key)}?expand=names,schema";
             if (!string.IsNullOrEmpty(fields))
-                url += $"?fields={Uri.EscapeDataString(fields)}";
+                url += $"&fields={Uri.EscapeDataString(fields)}";
 
             var data = await ApiHelper.GetAsync(client, url, ct);
             if (data == null) return;
 
             var issue = data.Value;
-            OutputService.Print(FormatIssue(issue, descFormat), format);
+            OutputService.Print(WorkItemService.FormatIssue(issue, descFormat), format);
         });
         return cmd;
     }
@@ -71,7 +71,8 @@ public static class WorkItemCommands
             var requestedFields = !string.IsNullOrEmpty(fields)
                 ? fields
                 : "summary,status,issuetype,assignee,priority,reporter,created,updated";
-            var url = $"search/jql?jql={Uri.EscapeDataString(jql)}&maxResults={limit}&fields={Uri.EscapeDataString(requestedFields)}";
+            var url = $"search/jql?jql={Uri.EscapeDataString(jql)}&maxResults={limit}" +
+                $"&fields={Uri.EscapeDataString(requestedFields)}&expand=names,schema";
 
             var data = await ApiHelper.GetAsync(client, url, ct);
             if (data == null) return;
@@ -82,7 +83,10 @@ public static class WorkItemCommands
                 return;
             }
 
-            var issues = data.Value.GetProperty("issues").EnumerateArray().Select(i => FormatIssue(i, descFormat));
+            var names = data.Value.TryGetProperty("names", out var namesValue) ? namesValue.Clone() : (JsonElement?)null;
+            var schema = data.Value.TryGetProperty("schema", out var schemaValue) ? schemaValue.Clone() : (JsonElement?)null;
+            var issues = data.Value.GetProperty("issues").EnumerateArray()
+                .Select(issue => WorkItemService.FormatIssue(issue, descFormat, names, schema));
             OutputService.Print(issues, format);
         });
         return cmd;
@@ -99,8 +103,12 @@ public static class WorkItemCommands
         var labelOption = new Option<string?>("--label") { Description = "Comma-separated labels" };
         var parentOption = new Option<string?>("--parent") { Description = "Parent issue key" };
         var storyPointsOption = new Option<double?>("--story-points") { Description = "Story point estimate" };
+        var fieldsJsonOption = new Option<string?>("--fields-json")
+        {
+            Description = "Additional Jira fields as a JSON object keyed by field ID or unique field name"
+        };
 
-        var cmd = new Command("create", "Create a work item") { projectOption, typeOption, summaryOption, descriptionOption, descFormatOption, assigneeOption, labelOption, parentOption, storyPointsOption };
+        var cmd = new Command("create", "Create a work item") { projectOption, typeOption, summaryOption, descriptionOption, descFormatOption, assigneeOption, labelOption, parentOption, storyPointsOption, fieldsJsonOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
@@ -113,15 +121,25 @@ public static class WorkItemCommands
             var labels = parseResult.GetValue(labelOption);
             var parent = parseResult.GetValue(parentOption);
             var storyPoints = parseResult.GetValue(storyPointsOption);
+            var fieldsJson = parseResult.GetValue(fieldsJsonOption);
 
             if (!AllowedSpacesService.CheckAndPrompt(project.ToUpperInvariant(), "write")) { Environment.ExitCode = 1; return; }
 
             using var client = AtlasClientFactory.CreateJiraClient();
 
-            var fields = new Dictionary<string, object>
+            JiraCreateFieldMetadata createMetadata;
+            IReadOnlyDictionary<string, JsonElement> additionalFields;
+            try
+            {
+                createMetadata = await JiraFieldService.GetCreateMetadataAsync(client, project, type, ct);
+                additionalFields = JiraFieldService.ParseAdditionalFields(fieldsJson);
+            }
+            catch (Exception ex) { PrintDynamicFieldError(ex); return; }
+
+            var fields = new Dictionary<string, object?>
             {
                 ["project"] = new { key = project },
-                ["issuetype"] = new { name = type },
+                ["issuetype"] = new { id = createMetadata.IssueType.Id },
                 ["summary"] = summary
             };
 
@@ -155,9 +173,26 @@ public static class WorkItemCommands
 
             if (storyPoints.HasValue)
             {
-                var spField = AuthService.LoadConfig().StoryPointsField;
-                fields[spField] = storyPoints.Value;
+                var storyPointsField = JiraFieldService.FindPreferredField(
+                    createMetadata.Fields,
+                    AuthService.LoadConfig().StoryPointsField,
+                    ["Story point estimate", "Story Points"],
+                    "number");
+                if (storyPointsField == null)
+                {
+                    OutputService.PrintError("field_not_available", "A numeric story-points field is not available for this project and issue type.");
+                    Environment.ExitCode = 1;
+                    return;
+                }
+                fields[storyPointsField.Id] = storyPoints.Value;
             }
+
+            try
+            {
+                JiraFieldService.ApplyAdditionalFields(fields, additionalFields, createMetadata.Fields);
+                JiraFieldService.ValidateRequiredFields(createMetadata.Fields, fields.Keys);
+            }
+            catch (Exception ex) { PrintDynamicFieldError(ex); return; }
 
             var payload = new { fields };
             var result = await ApiHelper.PostAsync(client, "issue", payload, ct);
@@ -187,8 +222,12 @@ public static class WorkItemCommands
         var startDateOption = new Option<string?>("--start-date") { Description = "Start date in ISO format (e.g. 2026-04-07)" };
         var dueDateOption = new Option<string?>("--due-date") { Description = "Due date in ISO format (e.g. 2026-04-14)" };
         var parentOption = new Option<string?>("--parent") { Description = "New parent/epic issue key, or 'none' to remove parent" };
+        var fieldsJsonOption = new Option<string?>("--fields-json")
+        {
+            Description = "Additional Jira fields as a JSON object keyed by field ID or unique field name"
+        };
 
-        var cmd = new Command("edit", "Edit a work item") { keyArg, summaryOption, descriptionOption, descFormatOption, assigneeOption, labelOption, priorityOption, storyPointsOption, startDateOption, dueDateOption, parentOption };
+        var cmd = new Command("edit", "Edit a work item") { keyArg, summaryOption, descriptionOption, descFormatOption, assigneeOption, labelOption, priorityOption, storyPointsOption, startDateOption, dueDateOption, parentOption, fieldsJsonOption };
         cmd.SetAction(async (parseResult, ct) =>
         {
             var format = parseResult.GetValue(formatOption)!;
@@ -203,12 +242,24 @@ public static class WorkItemCommands
             var startDate = parseResult.GetValue(startDateOption);
             var dueDate = parseResult.GetValue(dueDateOption);
             var parent = parseResult.GetValue(parentOption);
+            var fieldsJson = parseResult.GetValue(fieldsJsonOption);
 
             var projectKey = AllowedSpacesService.ExtractProjectKey(key);
             if (!AllowedSpacesService.CheckAndPrompt(projectKey, "write")) { Environment.ExitCode = 1; return; }
 
             using var client = AtlasClientFactory.CreateJiraClient();
-            var fields = new Dictionary<string, object>();
+            IReadOnlyDictionary<string, JsonElement> additionalFields;
+            try { additionalFields = JiraFieldService.ParseAdditionalFields(fieldsJson); }
+            catch (Exception ex) { PrintDynamicFieldError(ex); return; }
+
+            IReadOnlyList<JiraFieldMetadata>? editMetadata = null;
+            if (storyPoints.HasValue || !string.IsNullOrEmpty(startDate) || !string.IsNullOrEmpty(dueDate) || additionalFields.Count > 0)
+            {
+                try { editMetadata = await JiraFieldService.GetEditMetadataAsync(client, key, ct); }
+                catch (Exception ex) { PrintDynamicFieldError(ex); return; }
+            }
+
+            var fields = new Dictionary<string, object?>();
 
             if (!string.IsNullOrEmpty(summary))
                 fields["summary"] = summary;
@@ -243,21 +294,50 @@ public static class WorkItemCommands
 
             if (storyPoints.HasValue)
             {
-                var spField = AuthService.LoadConfig().StoryPointsField;
-                fields[spField] = storyPoints.Value;
+                var storyPointsField = JiraFieldService.FindPreferredField(
+                    editMetadata!,
+                    AuthService.LoadConfig().StoryPointsField,
+                    ["Story point estimate", "Story Points"],
+                    "number");
+                if (storyPointsField == null)
+                {
+                    OutputService.PrintError("field_not_available", "A numeric story-points field is not editable on this work item.");
+                    Environment.ExitCode = 1;
+                    return;
+                }
+                fields[storyPointsField.Id] = storyPoints.Value;
             }
 
-            if (!string.IsNullOrEmpty(startDate) || !string.IsNullOrEmpty(dueDate))
+            if (!string.IsNullOrEmpty(startDate))
             {
-                var dateFields = await ResolveDateFields(client, projectKey, ct);
-                if (dateFields == null) return;
-
-                if (!string.IsNullOrEmpty(startDate))
-                    fields[dateFields.Value.StartDateField] = startDate;
-
-                if (!string.IsNullOrEmpty(dueDate))
-                    fields[dateFields.Value.DueDateField] = dueDate;
+                var startDateField = JiraFieldService.FindPreferredField(
+                    editMetadata!,
+                    AuthService.LoadConfig().StartDateField,
+                    ["Start date", "Start Date"],
+                    "date");
+                if (startDateField == null)
+                {
+                    OutputService.PrintError("field_not_available", "A start-date field is not editable on this work item.");
+                    Environment.ExitCode = 1;
+                    return;
+                }
+                fields[startDateField.Id] = startDate;
             }
+
+            if (!string.IsNullOrEmpty(dueDate))
+            {
+                var dueDateField = JiraFieldService.FindPreferredField(editMetadata!, "duedate", ["Due date", "Due Date"], "date");
+                if (dueDateField == null)
+                {
+                    OutputService.PrintError("field_not_available", "The due-date field is not editable on this work item.");
+                    Environment.ExitCode = 1;
+                    return;
+                }
+                fields[dueDateField.Id] = dueDate;
+            }
+
+            try { JiraFieldService.ApplyAdditionalFields(fields, additionalFields, editMetadata ?? Array.Empty<JiraFieldMetadata>()); }
+            catch (Exception ex) { PrintDynamicFieldError(ex); return; }
 
             if (!string.IsNullOrEmpty(parent))
             {
@@ -363,24 +443,6 @@ public static class WorkItemCommands
         return cmd;
     }
 
-    private static async Task<(string StartDateField, string DueDateField)?> ResolveDateFields(HttpClient client, string projectKey, CancellationToken ct)
-    {
-        var project = await ApiHelper.GetAsync(client, $"project/{Uri.EscapeDataString(projectKey)}", ct);
-        if (project == null) return null;
-
-        var style = project.Value.GetString("style");
-        var isTeamManaged = string.Equals(style, "next-gen", StringComparison.OrdinalIgnoreCase);
-
-        if (isTeamManaged)
-        {
-            var config = AuthService.LoadConfig();
-            return (config.StartDateField, "duedate");
-        }
-
-        // Company-managed: use standard fields
-        return ("startDate", "duedate");
-    }
-
     private static async Task<string?> ResolveAssignee(HttpClient client, string assignee, CancellationToken ct)
     {
         if (assignee == "@me")
@@ -445,5 +507,14 @@ public static class WorkItemCommands
             Updated = fields.GetString("updated"),
             Description = description
         };
+    }
+
+    private static void PrintDynamicFieldError(Exception ex)
+    {
+        if (ex is AtlasApiException apiException)
+            OutputService.PrintError(((int)apiException.StatusCode).ToString(), apiException.Message);
+        else
+            OutputService.PrintError("dynamic_fields", ex.Message);
+        Environment.ExitCode = 1;
     }
 }

@@ -11,9 +11,9 @@ public static class WorkItemService
             throw AllowedSpacesService.CreateAccessDeniedException(projectKey, "read");
 
         using var client = AtlasClientFactory.CreateJiraClient();
-        var url = $"issue/{Uri.EscapeDataString(key)}";
+        var url = $"issue/{Uri.EscapeDataString(key)}?expand=names,schema";
         if (!string.IsNullOrEmpty(fields))
-            url += $"?fields={Uri.EscapeDataString(fields)}";
+            url += $"&fields={Uri.EscapeDataString(fields)}";
 
         var issue = await ApiHelper.GetOrThrowAsync(client, url, ct);
         return FormatIssue(issue, descFormat);
@@ -25,28 +25,34 @@ public static class WorkItemService
         var requestedFields = !string.IsNullOrEmpty(fields)
             ? fields
             : "summary,status,issuetype,assignee,priority,reporter,created,updated";
-        var url = $"search/jql?jql={Uri.EscapeDataString(jql)}&maxResults={limit}&fields={Uri.EscapeDataString(requestedFields)}";
+        var url = $"search/jql?jql={Uri.EscapeDataString(jql)}&maxResults={limit}" +
+            $"&fields={Uri.EscapeDataString(requestedFields)}&expand=names,schema";
 
         var data = await ApiHelper.GetOrThrowAsync(client, url, ct);
 
         if (countOnly)
             return new { Total = data.GetString("total") };
 
-        return data.GetProperty("issues").EnumerateArray().Select(i => FormatIssue(i, descFormat)).ToList();
+        var names = data.TryGetProperty("names", out var namesValue) ? namesValue.Clone() : (JsonElement?)null;
+        var schema = data.TryGetProperty("schema", out var schemaValue) ? schemaValue.Clone() : (JsonElement?)null;
+        return data.GetProperty("issues").EnumerateArray()
+            .Select(issue => FormatIssue(issue, descFormat, names, schema)).ToList();
     }
 
     public static async Task<object> CreateAsync(string project, string type, string summary,
         string? description = null, string descFormat = "plain", string? assignee = null,
-        string? labels = null, string? parent = null, double? storyPoints = null, CancellationToken ct = default)
+        string? labels = null, string? parent = null, double? storyPoints = null,
+        IReadOnlyDictionary<string, JsonElement>? additionalFields = null, CancellationToken ct = default)
     {
         if (!AllowedSpacesService.CheckAndPrompt(project.ToUpperInvariant(), "write"))
             throw AllowedSpacesService.CreateAccessDeniedException(project, "write");
 
         using var client = AtlasClientFactory.CreateJiraClient();
-        var fieldDict = new Dictionary<string, object>
+        var createMetadata = await JiraFieldService.GetCreateMetadataAsync(client, project, type, ct);
+        var fieldDict = new Dictionary<string, object?>
         {
             ["project"] = new { key = project },
-            ["issuetype"] = new { name = type },
+            ["issuetype"] = new { id = createMetadata.IssueType.Id },
             ["summary"] = summary
         };
 
@@ -79,9 +85,17 @@ public static class WorkItemService
 
         if (storyPoints.HasValue)
         {
-            var spField = AuthService.LoadConfig().StoryPointsField;
-            fieldDict[spField] = storyPoints.Value;
+            var storyPointsField = JiraFieldService.FindPreferredField(
+                createMetadata.Fields,
+                AuthService.LoadConfig().StoryPointsField,
+                ["Story point estimate", "Story Points"],
+                "number") ?? throw new InvalidOperationException(
+                    "A numeric story-points field is not available for this project and issue type.");
+            fieldDict[storyPointsField.Id] = storyPoints.Value;
         }
+
+        JiraFieldService.ApplyAdditionalFields(fieldDict, additionalFields, createMetadata.Fields);
+        JiraFieldService.ValidateRequiredFields(createMetadata.Fields, fieldDict.Keys);
 
         var result = await ApiHelper.PostOrThrowAsync(client, "issue", new { fields = fieldDict }, ct);
         return new
@@ -96,14 +110,17 @@ public static class WorkItemService
     public static async Task<object> EditAsync(string key, string? summary = null, string? description = null,
         string descFormat = "plain", string? assignee = null, string? labels = null, string? priority = null,
         double? storyPoints = null, string? startDate = null, string? dueDate = null, string? parent = null,
-        CancellationToken ct = default)
+        IReadOnlyDictionary<string, JsonElement>? additionalFields = null, CancellationToken ct = default)
     {
         var projectKey = AllowedSpacesService.ExtractProjectKey(key);
         if (!AllowedSpacesService.CheckAndPrompt(projectKey, "write"))
             throw AllowedSpacesService.CreateAccessDeniedException(projectKey, "write");
 
         using var client = AtlasClientFactory.CreateJiraClient();
-        var fieldDict = new Dictionary<string, object>();
+        var fieldDict = new Dictionary<string, object?>();
+        IReadOnlyList<JiraFieldMetadata>? editMetadata = null;
+        if (storyPoints.HasValue || !string.IsNullOrEmpty(startDate) || !string.IsNullOrEmpty(dueDate) || additionalFields?.Count > 0)
+            editMetadata = await JiraFieldService.GetEditMetadataAsync(client, key, ct);
 
         if (!string.IsNullOrEmpty(summary)) fieldDict["summary"] = summary;
 
@@ -136,16 +153,35 @@ public static class WorkItemService
 
         if (storyPoints.HasValue)
         {
-            var spField = AuthService.LoadConfig().StoryPointsField;
-            fieldDict[spField] = storyPoints.Value;
+            var storyPointsField = JiraFieldService.FindPreferredField(
+                editMetadata!,
+                AuthService.LoadConfig().StoryPointsField,
+                ["Story point estimate", "Story Points"],
+                "number") ?? throw new InvalidOperationException(
+                    "A numeric story-points field is not editable on this work item.");
+            fieldDict[storyPointsField.Id] = storyPoints.Value;
         }
 
-        if (!string.IsNullOrEmpty(startDate) || !string.IsNullOrEmpty(dueDate))
+        if (!string.IsNullOrEmpty(startDate))
         {
-            var dateFields = await ResolveDateFields(client, projectKey, ct);
-            if (!string.IsNullOrEmpty(startDate)) fieldDict[dateFields.StartDateField] = startDate;
-            if (!string.IsNullOrEmpty(dueDate)) fieldDict[dateFields.DueDateField] = dueDate;
+            var startDateField = JiraFieldService.FindPreferredField(
+                editMetadata!,
+                AuthService.LoadConfig().StartDateField,
+                ["Start date", "Start Date"],
+                "date") ?? throw new InvalidOperationException(
+                    "A start-date field is not editable on this work item.");
+            fieldDict[startDateField.Id] = startDate;
         }
+
+        if (!string.IsNullOrEmpty(dueDate))
+        {
+            var dueDateField = JiraFieldService.FindPreferredField(
+                editMetadata!, "duedate", ["Due date", "Due Date"], "date") ??
+                throw new InvalidOperationException("The due-date field is not editable on this work item.");
+            fieldDict[dueDateField.Id] = dueDate;
+        }
+
+        JiraFieldService.ApplyAdditionalFields(fieldDict, additionalFields, editMetadata ?? Array.Empty<JiraFieldMetadata>());
 
         if (!string.IsNullOrEmpty(parent))
         {
@@ -231,30 +267,30 @@ public static class WorkItemService
         return firstMatch.GetString("accountId");
     }
 
-    internal static async Task<(string StartDateField, string DueDateField)> ResolveDateFields(HttpClient client, string projectKey, CancellationToken ct)
-    {
-        var project = await ApiHelper.GetOrThrowAsync(client, $"project/{Uri.EscapeDataString(projectKey)}", ct);
-        var style = project.GetString("style");
-        var isTeamManaged = string.Equals(style, "next-gen", StringComparison.OrdinalIgnoreCase);
-
-        if (isTeamManaged)
-        {
-            var config = AuthService.LoadConfig();
-            return (config.StartDateField, "duedate");
-        }
-
-        return ("startDate", "duedate");
-    }
-
-    internal static object FormatIssue(JsonElement issue, string descFormat = "plain")
+    internal static object FormatIssue(
+        JsonElement issue,
+        string descFormat = "plain",
+        JsonElement? inheritedNames = null,
+        JsonElement? inheritedSchema = null)
     {
         issue.TryGetProperty("fields", out var fields);
         var config = AuthService.LoadConfig();
+        var names = issue.TryGetProperty("names", out var issueNames) ? issueNames : inheritedNames;
+        var schema = issue.TryGetProperty("schema", out var issueSchema) ? issueSchema : inheritedSchema;
         double? storyPoints = null;
-        if (fields.TryGetProperty(config.StoryPointsField, out var spValue) && spValue.ValueKind == JsonValueKind.Number)
+        var storyPointsFieldId = config.StoryPointsField;
+        if (!fields.TryGetProperty(storyPointsFieldId, out var spValue))
+        {
+            storyPointsFieldId = FindFieldIdByName(names, "Story point estimate", "Story Points") ?? storyPointsFieldId;
+            fields.TryGetProperty(storyPointsFieldId, out spValue);
+        }
+        if (spValue.ValueKind == JsonValueKind.Number)
             storyPoints = spValue.GetDouble();
 
-        var startDate = fields.GetString(config.StartDateField) ?? fields.GetString("startDate");
+        var startDateFieldId = fields.TryGetProperty(config.StartDateField, out _)
+            ? config.StartDateField
+            : FindFieldIdByName(names, "Start date", "Start Date") ?? "startDate";
+        var startDate = fields.GetString(startDateFieldId) ?? fields.GetString("startDate");
         var dueDate = fields.GetString("duedate");
 
         object? description = descFormat switch
@@ -263,6 +299,25 @@ public static class WorkItemService
             "adf" => AdfConverter.ExtractRawAdf(fields),
             _ => AdfConverter.ExtractPlainText(fields)
         };
+
+        var normalizedFieldIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "summary", "status", "issuetype", "priority", "assignee", "reporter", "created", "updated",
+            "description", "duedate", "startDate", storyPointsFieldId, startDateFieldId
+        };
+        var additionalFields = fields.ValueKind == JsonValueKind.Object
+            ? fields.EnumerateObject()
+                .Where(property => !normalizedFieldIds.Contains(property.Name))
+                .ToDictionary(
+                    property => property.Name,
+                    property => new
+                    {
+                        Name = GetMetadataValue(names, property.Name),
+                        Schema = GetMetadataElement(schema, property.Name),
+                        Value = property.Value.Clone()
+                    },
+                    StringComparer.OrdinalIgnoreCase)
+            : null;
 
         return new
         {
@@ -280,7 +335,38 @@ public static class WorkItemService
             ReporterId = fields.GetString("reporter", "accountId"),
             Created = fields.GetString("created"),
             Updated = fields.GetString("updated"),
-            Description = description
+            Description = description,
+            AdditionalFields = additionalFields is { Count: > 0 } ? additionalFields : null
         };
+    }
+
+    private static string? FindFieldIdByName(JsonElement? names, params string[] candidates)
+    {
+        if (!names.HasValue || names.Value.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var expected = candidates.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in names.Value.EnumerateObject())
+        {
+            if (expected.Contains(property.Value.GetString() ?? ""))
+                return property.Name;
+        }
+        return null;
+    }
+
+    private static string? GetMetadataValue(JsonElement? metadata, string fieldId)
+    {
+        if (metadata.HasValue && metadata.Value.ValueKind == JsonValueKind.Object &&
+            metadata.Value.TryGetProperty(fieldId, out var value))
+            return value.GetString();
+        return null;
+    }
+
+    private static JsonElement? GetMetadataElement(JsonElement? metadata, string fieldId)
+    {
+        if (metadata.HasValue && metadata.Value.ValueKind == JsonValueKind.Object &&
+            metadata.Value.TryGetProperty(fieldId, out var value))
+            return value.Clone();
+        return null;
     }
 }
