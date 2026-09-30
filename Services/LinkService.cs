@@ -21,7 +21,7 @@ public static class LinkService
     {
         var projectKey = AllowedSpacesService.ExtractProjectKey(key);
         if (!AllowedSpacesService.CheckAndPrompt(projectKey, "read"))
-            throw new UnauthorizedAccessException($"Project '{projectKey}' is not allowed for 'read'.");
+            throw AllowedSpacesService.CreateAccessDeniedException(projectKey, "read");
 
         using var client = AtlasClientFactory.CreateJiraClient();
         var issue = await ApiHelper.GetOrThrowAsync(client, $"issue/{Uri.EscapeDataString(key)}?fields=issuelinks", ct);
@@ -39,9 +39,9 @@ public static class LinkService
         var fromProject = AllowedSpacesService.ExtractProjectKey(fromKey);
         var toProject = AllowedSpacesService.ExtractProjectKey(toKey);
         if (!AllowedSpacesService.CheckAndPrompt(fromProject, "write"))
-            throw new UnauthorizedAccessException($"Project '{fromProject}' is not allowed for 'write'.");
+            throw AllowedSpacesService.CreateAccessDeniedException(fromProject, "write");
         if (!AllowedSpacesService.CheckAndPrompt(toProject, "write"))
-            throw new UnauthorizedAccessException($"Project '{toProject}' is not allowed for 'write'.");
+            throw AllowedSpacesService.CreateAccessDeniedException(toProject, "write");
 
         using var client = AtlasClientFactory.CreateJiraClient();
         var payload = new Dictionary<string, object>

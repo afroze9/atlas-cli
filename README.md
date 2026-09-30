@@ -40,6 +40,29 @@ atlas-cli bitbucket pipeline log   --workspace WS --repo REPO --id 42 --tail 200
 atlas-cli --format json jira workitem list
 ```
 
+## Configuration
+
+Permission checks for Jira projects and Confluence spaces are enabled by default. They can be disabled globally so atlas-cli bypasses per-project and per-space approval entirely:
+
+```bash
+atlas-cli config set permission-checks disabled
+atlas-cli config get
+
+# Turn the checks back on
+atlas-cli config set permission-checks enabled
+```
+
+The setting is stored at the top level of `~/.atlas-cli/config.json` and applies to every account. The `ATLAS_CLI_SKIP_ALLOWLIST` environment variable remains available and, when set to `true` or `false`, overrides the persisted setting.
+
+Permission checks are always non-interactive. When checks are enabled and a command targets a project or space that is not allowed, atlas-cli exits immediately with a nonzero status and prints the exact command needed to grant access. For example:
+
+```text
+Access denied by atlas-cli: Jira project 'PROJ' is not allowed for action 'read'.
+Grant access, then retry: atlas-cli permissions allow PROJ --type jira --actions read
+```
+
+Run the suggested command, then retry the original command. This behavior prevents scripts, MCP clients, and other AI tools from blocking while waiting for terminal input.
+
 ## Bitbucket Authentication
 
 Bitbucket Cloud rejects Atlassian API tokens that were not created with Bitbucket scopes. atlas-cli supports three independent ways to authenticate to Bitbucket — in increasing specificity:

@@ -71,6 +71,29 @@ public class AuthService
     }
 
     /// <summary>
+    /// Returns whether Jira and Confluence permission checks are enabled globally.
+    /// ATLAS_CLI_SKIP_ALLOWLIST takes precedence when it is set to true or false.
+    /// </summary>
+    public static bool ArePermissionChecksEnabled()
+    {
+        var envValue = Environment.GetEnvironmentVariable("ATLAS_CLI_SKIP_ALLOWLIST");
+        if (bool.TryParse(envValue, out var skipAllowlist))
+            return !skipAllowlist;
+
+        return LoadStore().PermissionChecksEnabled;
+    }
+
+    /// <summary>
+    /// Enables or disables Jira and Confluence permission checks globally.
+    /// </summary>
+    public static void SetPermissionChecksEnabled(bool enabled)
+    {
+        var store = LoadStore();
+        store.PermissionChecksEnabled = enabled;
+        SaveStore(store);
+    }
+
+    /// <summary>
     /// Returns all accounts and which one is active.
     /// </summary>
     public static (Dictionary<string, AtlasConfig> Accounts, string? ActiveAccount) GetAllAccounts()
@@ -105,9 +128,9 @@ public class AuthService
 
         if (store.Accounts.Count == 0)
         {
-            // No accounts left, delete the config file
-            if (File.Exists(ConfigPath))
-                File.Delete(ConfigPath);
+            // Preserve top-level configuration even when no accounts remain.
+            store.ActiveAccount = null;
+            SaveStore(store);
             return key;
         }
 
@@ -299,7 +322,9 @@ public class AuthService
         try
         {
             var store = JsonSerializer.Deserialize<ConfigStore>(json);
-            if (store?.Accounts.Count > 0)
+            using var document = JsonDocument.Parse(json);
+            var isStoreFormat = document.RootElement.TryGetProperty(nameof(ConfigStore.Accounts), out _);
+            if (store != null && isStoreFormat)
                 return store;
         }
         catch { }
@@ -331,6 +356,7 @@ public class AuthService
         var storeToSave = new ConfigStore
         {
             ActiveAccount = store.ActiveAccount,
+            PermissionChecksEnabled = store.PermissionChecksEnabled,
             Accounts = store.Accounts.ToDictionary(
                 kvp => kvp.Key,
                 kvp => new AtlasConfig
@@ -395,6 +421,7 @@ public class AuthService
 public class ConfigStore
 {
     public string? ActiveAccount { get; set; }
+    public bool PermissionChecksEnabled { get; set; } = true;
     public Dictionary<string, AtlasConfig> Accounts { get; set; } = new();
 }
 

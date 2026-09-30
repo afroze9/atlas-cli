@@ -8,7 +8,7 @@ public static class WorkItemService
     {
         var projectKey = AllowedSpacesService.ExtractProjectKey(key);
         if (!AllowedSpacesService.CheckAndPrompt(projectKey, "read"))
-            throw new UnauthorizedAccessException($"Project '{projectKey}' is not allowed for 'read'.");
+            throw AllowedSpacesService.CreateAccessDeniedException(projectKey, "read");
 
         using var client = AtlasClientFactory.CreateJiraClient();
         var url = $"issue/{Uri.EscapeDataString(key)}";
@@ -40,7 +40,7 @@ public static class WorkItemService
         string? labels = null, string? parent = null, double? storyPoints = null, CancellationToken ct = default)
     {
         if (!AllowedSpacesService.CheckAndPrompt(project.ToUpperInvariant(), "write"))
-            throw new UnauthorizedAccessException($"Project '{project}' is not allowed for 'write'.");
+            throw AllowedSpacesService.CreateAccessDeniedException(project, "write");
 
         using var client = AtlasClientFactory.CreateJiraClient();
         var fieldDict = new Dictionary<string, object>
@@ -100,7 +100,7 @@ public static class WorkItemService
     {
         var projectKey = AllowedSpacesService.ExtractProjectKey(key);
         if (!AllowedSpacesService.CheckAndPrompt(projectKey, "write"))
-            throw new UnauthorizedAccessException($"Project '{projectKey}' is not allowed for 'write'.");
+            throw AllowedSpacesService.CreateAccessDeniedException(projectKey, "write");
 
         using var client = AtlasClientFactory.CreateJiraClient();
         var fieldDict = new Dictionary<string, object>();
@@ -171,7 +171,7 @@ public static class WorkItemService
         {
             var projectKey = AllowedSpacesService.ExtractProjectKey(key);
             if (!AllowedSpacesService.CheckAndPrompt(projectKey, "write"))
-                throw new UnauthorizedAccessException($"Project '{projectKey}' is not allowed for 'write'.");
+                throw AllowedSpacesService.CreateAccessDeniedException(projectKey, "write");
 
             var transitions = await ApiHelper.GetOrThrowAsync(client, $"issue/{Uri.EscapeDataString(key)}/transitions", ct);
             var match = transitions.GetProperty("transitions").EnumerateArray()
@@ -197,7 +197,7 @@ public static class WorkItemService
     {
         var projectKey = AllowedSpacesService.ExtractProjectKey(key);
         if (!AllowedSpacesService.CheckAndPrompt(projectKey, "write"))
-            throw new UnauthorizedAccessException($"Project '{projectKey}' is not allowed for 'write'.");
+            throw AllowedSpacesService.CreateAccessDeniedException(projectKey, "write");
 
         using var client = AtlasClientFactory.CreateJiraClient();
 

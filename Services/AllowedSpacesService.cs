@@ -31,15 +31,13 @@ public static class AllowedSpacesService
         File.WriteAllText(SpacesPath, JsonSerializer.Serialize(list, JsonOptions));
     }
 
-    public static bool IsBypassed =>
-        string.Equals(Environment.GetEnvironmentVariable("ATLAS_CLI_SKIP_ALLOWLIST"), "true", StringComparison.OrdinalIgnoreCase);
+    public static bool IsBypassed => !AuthService.ArePermissionChecksEnabled();
 
     /// <summary>
     /// Checks if a space/project is allowed for the given action.
-    /// If not found or not allowed, prompts interactively.
-    /// Returns true if allowed, false if denied.
+    /// Returns immediately without prompting so non-interactive callers cannot block.
     /// </summary>
-    public static bool CheckAndPrompt(string identifier, string action, string type = "jira", bool interactive = true)
+    public static bool CheckAndPrompt(string identifier, string action, string type = "jira")
     {
         if (IsBypassed) return true;
 
@@ -49,54 +47,22 @@ public static class AllowedSpacesService
         if (space != null && space.AllowedActions.Contains(action, StringComparer.OrdinalIgnoreCase))
             return true;
 
-        if (!interactive || Console.IsInputRedirected)
-        {
-            Console.Error.WriteLine($"{type} '{identifier}' is not allowed for action '{action}'. " +
-                "Run 'atlas-cli permissions allow' to add it.");
-            return false;
-        }
-
-        // Interactive prompt
-        Console.Error.WriteLine();
-        Console.Error.WriteLine($"  {type} '{identifier}' is not allowed for '{action}'.");
-        Console.Error.WriteLine();
-        Console.Error.Write($"  Allow {action} for '{identifier}'? [y/N/a] (y=yes once, a=allow and save): ");
-
-        var response = Console.ReadLine()?.Trim().ToLowerInvariant();
-
-        if (response == "y")
-            return true;
-
-        if (response == "a")
-        {
-            if (space != null)
-            {
-                if (!space.AllowedActions.Contains(action, StringComparer.OrdinalIgnoreCase))
-                    space.AllowedActions.Add(action);
-            }
-            else
-            {
-                Console.Error.Write($"  Display name [{identifier}]: ");
-                var name = Console.ReadLine()?.Trim();
-                if (string.IsNullOrEmpty(name)) name = identifier;
-
-                space = new AllowedSpace
-                {
-                    Identifier = identifier.ToUpperInvariant(),
-                    DisplayName = name,
-                    Type = type,
-                    AllowedActions = [action]
-                };
-                list.Spaces.Add(space);
-            }
-
-            Save(list);
-            Console.Error.WriteLine($"  Saved. '{identifier}' is now allowed for '{action}'.");
-            return true;
-        }
-
-        Console.Error.WriteLine("  Denied.");
+        Console.Error.WriteLine(GetAccessDeniedMessage(identifier, action, type));
         return false;
+    }
+
+    public static UnauthorizedAccessException CreateAccessDeniedException(
+        string identifier, string action, string type = "jira") =>
+        new(GetAccessDeniedMessage(identifier, action, type));
+
+    public static string GetAccessDeniedMessage(string identifier, string action, string type = "jira")
+    {
+        var resource = type.Equals("confluence", StringComparison.OrdinalIgnoreCase)
+            ? "Confluence space"
+            : "Jira project";
+
+        return $"Access denied by atlas-cli: {resource} '{identifier}' is not allowed for action '{action}'.{Environment.NewLine}" +
+            $"Grant access, then retry: atlas-cli permissions allow {identifier} --type {type.ToLowerInvariant()} --actions {action.ToLowerInvariant()}";
     }
 
     /// <summary>

@@ -20,7 +20,7 @@ public static class JiraProjectService
     public static async Task<object> ViewAsync(string key, CancellationToken ct = default)
     {
         if (!AllowedSpacesService.CheckAndPrompt(key.ToUpperInvariant(), "read"))
-            throw new UnauthorizedAccessException($"Project '{key}' is not allowed for 'read'.");
+            throw AllowedSpacesService.CreateAccessDeniedException(key, "read");
 
         using var client = AtlasClientFactory.CreateJiraClient();
         var p = await ApiHelper.GetOrThrowAsync(client, $"project/{Uri.EscapeDataString(key)}", ct);

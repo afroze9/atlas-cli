@@ -8,7 +8,7 @@ public static class CommentService
     {
         var projectKey = AllowedSpacesService.ExtractProjectKey(key);
         if (!AllowedSpacesService.CheckAndPrompt(projectKey, "read"))
-            throw new UnauthorizedAccessException($"Project '{projectKey}' is not allowed for 'read'.");
+            throw AllowedSpacesService.CreateAccessDeniedException(projectKey, "read");
 
         using var client = AtlasClientFactory.CreateJiraClient();
         var data = await ApiHelper.GetOrThrowAsync(client, $"issue/{Uri.EscapeDataString(key)}/comment", ct);
@@ -28,7 +28,7 @@ public static class CommentService
     {
         var projectKey = AllowedSpacesService.ExtractProjectKey(key);
         if (!AllowedSpacesService.CheckAndPrompt(projectKey, "write"))
-            throw new UnauthorizedAccessException($"Project '{projectKey}' is not allowed for 'write'.");
+            throw AllowedSpacesService.CreateAccessDeniedException(projectKey, "write");
 
         using var client = AtlasClientFactory.CreateJiraClient();
         var adf = bodyFormat switch

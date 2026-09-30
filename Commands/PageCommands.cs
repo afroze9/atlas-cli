@@ -89,7 +89,7 @@ public static class PageCommands
             var pageSpaceId = p.GetString("spaceId");
             if (!string.IsNullOrEmpty(pageSpaceId))
             {
-                if (!AllowedSpacesService.CheckAndPrompt(pageSpaceId, "read")) { Environment.ExitCode = 1; return; }
+                if (!AllowedSpacesService.CheckAndPrompt(pageSpaceId, "read", "confluence")) { Environment.ExitCode = 1; return; }
             }
 
             OutputService.Print(new

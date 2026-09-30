@@ -22,4 +22,5 @@ rootCommand.Subcommands.Add(PermissionCommands.Build(GlobalOptions.Format));
 rootCommand.Subcommands.Add(ConfigCommands.Build(GlobalOptions.Format));
 rootCommand.Subcommands.Add(McpCommand.Build());
 
-return await rootCommand.Parse(args).InvokeAsync();
+var invocationExitCode = await rootCommand.Parse(args).InvokeAsync();
+return Environment.ExitCode != 0 ? Environment.ExitCode : invocationExitCode;

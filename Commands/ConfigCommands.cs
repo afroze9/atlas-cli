@@ -20,17 +20,11 @@ public static class ConfigCommands
         {
             var format = parseResult.GetValue(formatOption)!;
             var config = AuthService.GetStatus();
-            if (config == null)
-            {
-                OutputService.PrintError("not_configured", "No configuration found. Run 'atlas-cli auth login' first.");
-                Environment.ExitCode = 1;
-                return Task.CompletedTask;
-            }
-
             OutputService.Print(new
             {
-                config.StoryPointsField,
-                config.StartDateField
+                PermissionChecksEnabled = AuthService.ArePermissionChecksEnabled(),
+                StoryPointsField = config?.StoryPointsField,
+                StartDateField = config?.StartDateField
             }, format);
             return Task.CompletedTask;
         });
@@ -40,8 +34,37 @@ public static class ConfigCommands
     private static Command BuildSet()
     {
         var cmd = new Command("set", "Set a configuration value");
+        cmd.Subcommands.Add(BuildSetPermissionChecks());
         cmd.Subcommands.Add(BuildSetStoryPointsField());
         cmd.Subcommands.Add(BuildSetStartDateField());
+        return cmd;
+    }
+
+    private static Command BuildSetPermissionChecks()
+    {
+        var stateArg = new Argument<string>("state") { Description = "enabled or disabled" };
+        var cmd = new Command("permission-checks", "Enable or disable all Jira and Confluence permission checks") { stateArg };
+        cmd.SetAction((parseResult, _) =>
+        {
+            var state = parseResult.GetValue(stateArg)!;
+            var enabled = state.ToLowerInvariant() switch
+            {
+                "enabled" or "enable" or "true" or "on" => true,
+                "disabled" or "disable" or "false" or "off" => false,
+                _ => (bool?)null
+            };
+
+            if (enabled == null)
+            {
+                OutputService.PrintError("invalid_value", "State must be 'enabled' or 'disabled'.");
+                Environment.ExitCode = 1;
+                return Task.CompletedTask;
+            }
+
+            AuthService.SetPermissionChecksEnabled(enabled.Value);
+            OutputService.Print(new { permissionChecksEnabled = enabled.Value });
+            return Task.CompletedTask;
+        });
         return cmd;
     }
 

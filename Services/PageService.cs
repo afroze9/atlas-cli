@@ -9,7 +9,7 @@ public static class PageService
         if (!string.IsNullOrEmpty(spaceId))
         {
             if (!AllowedSpacesService.CheckAndPrompt(spaceId, "read", "confluence"))
-                throw new UnauthorizedAccessException($"Confluence space '{spaceId}' is not allowed for 'read'.");
+                throw AllowedSpacesService.CreateAccessDeniedException(spaceId, "read", "confluence");
         }
 
         using var client = AtlasClientFactory.CreateConfluenceClient();
@@ -43,8 +43,8 @@ public static class PageService
         var pageSpaceId = data.GetString("spaceId");
         if (!string.IsNullOrEmpty(pageSpaceId))
         {
-            if (!AllowedSpacesService.CheckAndPrompt(pageSpaceId, "read"))
-                throw new UnauthorizedAccessException($"Confluence space '{pageSpaceId}' is not allowed for 'read'.");
+            if (!AllowedSpacesService.CheckAndPrompt(pageSpaceId, "read", "confluence"))
+                throw AllowedSpacesService.CreateAccessDeniedException(pageSpaceId, "read", "confluence");
         }
 
         return new
@@ -64,7 +64,7 @@ public static class PageService
     public static async Task<object> CreateAsync(string spaceId, string title, string body, string bodyFormat = "markdown", string? parentId = null, string status = "current", string? subtype = null, CancellationToken ct = default)
     {
         if (!AllowedSpacesService.CheckAndPrompt(spaceId, "write", "confluence"))
-            throw new UnauthorizedAccessException($"Confluence space '{spaceId}' is not allowed for 'write'.");
+            throw AllowedSpacesService.CreateAccessDeniedException(spaceId, "write", "confluence");
 
         if (!string.IsNullOrEmpty(subtype) && subtype != "page" && subtype != "live")
             throw new InvalidOperationException("subtype must be 'page' or 'live'.");
@@ -114,7 +114,7 @@ public static class PageService
         if (!string.IsNullOrEmpty(spaceId))
         {
             if (!AllowedSpacesService.CheckAndPrompt(spaceId, "write", "confluence"))
-                throw new UnauthorizedAccessException($"Confluence space '{spaceId}' is not allowed for 'write'.");
+                throw AllowedSpacesService.CreateAccessDeniedException(spaceId, "write", "confluence");
         }
 
         var currentVersion = int.Parse(existing.GetString("version", "number") ?? "0");

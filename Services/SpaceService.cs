@@ -24,7 +24,7 @@ public static class SpaceService
     public static async Task<object> ViewAsync(string id, CancellationToken ct = default)
     {
         if (!AllowedSpacesService.CheckAndPrompt(id, "read", "confluence"))
-            throw new UnauthorizedAccessException($"Confluence space '{id}' is not allowed for 'read'.");
+            throw AllowedSpacesService.CreateAccessDeniedException(id, "read", "confluence");
 
         using var client = AtlasClientFactory.CreateConfluenceClient();
         var s = await ApiHelper.GetOrThrowAsync(client, $"spaces/{Uri.EscapeDataString(id)}?description-format=plain", ct);
